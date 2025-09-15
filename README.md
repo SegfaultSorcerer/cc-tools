@@ -8,12 +8,23 @@ CCTools is a command-line interface for file editing operations that **automatic
 
 ## 🚀 Features
 
+### File Operations
 - **Automatic Encoding Detection**: Detects file encoding using advanced algorithms
-- **Encoding Preservation**: Maintains original file encoding during edits
+- **Encoding Preservation**: Maintains original file encoding during all operations
 - **Atomic Operations**: All-or-nothing approach for multiple edits
+- **Safe File Operations**: Copy, move, and delete with backup support
+
+### Directory Operations
+- **Recursive Directory Operations**: Copy, move, and delete entire directory trees
+- **Intelligent Directory Listing**: Analyze encoding distribution across projects
+- **Atomic Directory Operations**: Complete success or full rollback
+- **Backup and Recovery**: Comprehensive backup system for directories
+
+### Cross-Platform & Safety
 - **Cross-Platform**: Works on Windows, Linux, and macOS
 - **Safe Operations**: Automatic backup and rollback on failures
 - **Multiple Formats**: Supports UTF-8, ISO-8859-1, Windows-1252, and many more
+- **Progress Tracking**: Detailed statistics and progress reporting
 
 ## 📥 Installation
 
@@ -46,17 +57,27 @@ This will create binaries for all supported platforms in the `dist/` directory.
 
 ### Basic Commands
 
-CCTools provides four main commands:
+CCTools provides comprehensive file and directory operations:
 
 ```bash
 cctools [command] [flags]
 ```
 
-#### Available Commands:
+#### File Operations:
 - `read` - Read files with automatic encoding detection
 - `write` - Create/overwrite files with specified encoding
 - `edit` - Edit files by replacing text strings
 - `multiedit` - Perform multiple edit operations atomically
+- `copy` - Copy files preserving encoding
+- `move` - Move files with atomic rollback
+- `delete` - Delete files with optional backup
+
+#### Directory Operations:
+- `mkdir` - Create directories with proper permissions
+- `copydir` - Copy directories recursively preserving encodings
+- `movedir` - Move directories with atomic operations
+- `rmdir` - Remove directories with backup support
+- `listdir` - List directory contents with encoding analysis
 
 ### 📖 Read Files
 
@@ -125,6 +146,38 @@ Then apply all edits atomically:
 cctools multiedit --edits-file changes.json --verbose
 ```
 
+### 📁 File Operations
+
+```bash
+# Copy files preserving encoding
+cctools copy --source arquivo.pas --dest backup.pas --preserve-mode
+
+# Move files safely
+cctools move --source old_config.ini --dest new_config.ini
+
+# Delete with backup
+cctools delete --file temp.log --backup --backup-path /safe/temp.log.bak
+```
+
+### 📂 Directory Operations
+
+```bash
+# Create directory structures
+cctools mkdir --path projeto/src/main --parents
+
+# Copy entire projects preserving all encodings
+cctools copydir --source old_project/ --dest backup/ --preserve-all
+
+# Move directories atomically
+cctools movedir --source temp_project/ --dest archive/
+
+# Remove with backup
+cctools rmdir --path old_data/ --recursive --backup
+
+# Analyze project encodings
+cctools listdir --path . --recursive --show-encoding --verbose
+```
+
 ## 🌍 Supported Encodings
 
 - UTF-8 (default for new files)
@@ -141,26 +194,38 @@ cctools multiedit --edits-file changes.json --verbose
 ## 💡 Why CCTools?
 
 ### The Problem
-Standard file editing tools often:
-- Assume UTF-8 encoding
+Standard file and directory tools often:
+- Assume UTF-8 encoding everywhere
 - Corrupt special characters in legacy files
 - Don't preserve original file encoding
 - Break compatibility with older systems
+- Lack atomic operations for complex changes
+- Don't provide adequate backup/recovery
 
 ### The Solution
 CCTools:
 - **Detects encoding automatically** before any operation
-- **Preserves original encoding** during edits
+- **Preserves original encoding** in all file and directory operations
 - **Maintains compatibility** with legacy systems
 - **Provides atomic operations** for safety
+- **Comprehensive backup system** for recovery
+- **Intelligent directory operations** with encoding analysis
 
 ## 🔒 Safety Features
 
-- **Automatic Backup**: Creates backup before editing
+### File Operations
+- **Automatic Backup**: Creates backup before editing/deleting
 - **Rollback on Failure**: Restores original if operation fails
 - **Atomic Multi-Edits**: All edits succeed or all are reverted
-- **Validation**: Checks for unique strings and validates operations
+- **Overwrite Protection**: Prevents accidental file overwrites
 - **Encoding Verification**: Confirms encoding before and after operations
+
+### Directory Operations
+- **Complete Directory Backup**: Full structure backup before destructive operations
+- **Atomic Directory Operations**: Complete success or full rollback
+- **Progressive Operations**: Skip existing files, preserve permissions
+- **Intelligent Conflict Resolution**: Handle existing destinations safely
+- **Comprehensive Logging**: Detailed statistics and progress tracking
 
 ## 📚 Examples
 
@@ -198,6 +263,37 @@ EOF
 cctools multiedit --edits-file config_updates.json
 ```
 
+### Complete Project Migration
+
+```bash
+# Analyze current project encodings
+cctools listdir --path . --recursive --show-encoding --verbose
+
+# Create backup of entire project
+cctools copydir --source . --dest ../backup_$(date +%Y%m%d)/ --preserve-all
+
+# Reorganize project structure
+cctools mkdir --path new_structure/src/main --parents
+cctools movedir --source old_modules/ --dest new_structure/src/
+
+# Clean up old files safely
+cctools rmdir --path temp/ --recursive --backup
+```
+
+### Encoding Analysis and Cleanup
+
+```bash
+# Analyze encoding distribution in large projects
+cctools listdir --path /legacy_codebase --recursive --show-encoding > encoding_report.txt
+
+# Copy only specific file types preserving encodings
+cctools listdir --path src/ --filter "*.pas" --show-encoding
+cctools copydir --source src/ --dest pascal_backup/ --preserve-all
+
+# Safe cleanup with comprehensive backup
+cctools rmdir --path old_version/ --recursive --backup --backup-path /safe/old_version_backup/
+```
+
 ## 🏗️ Architecture
 
 ```
@@ -207,10 +303,18 @@ cctools/
 │   ├── read.go            # Read command
 │   ├── write.go           # Write command
 │   ├── edit.go            # Edit command
-│   └── multiedit.go       # Multi-edit command
+│   ├── multiedit.go       # Multi-edit command
+│   ├── copy.go            # File copy command
+│   ├── move.go            # File move command
+│   ├── delete.go          # File delete command
+│   ├── mkdir.go           # Directory creation command
+│   ├── copydir.go         # Directory copy command
+│   ├── movedir.go         # Directory move command
+│   ├── rmdir.go           # Directory removal command
+│   └── listdir.go         # Directory listing command
 ├── pkg/
 │   ├── encoding/          # Encoding detection & conversion
-│   └── fileops/           # File operations
+│   └── fileops/           # File and directory operations
 ├── internal/models/       # Data structures
 ├── docs/                  # Documentation
 │   ├── tools.md          # Technical documentation
@@ -241,10 +345,20 @@ go build -o cctools
 ### Testing
 
 ```bash
-# Test with various file encodings
+# Test file operations with various encodings
 cctools read --file test_files/utf8.txt --detect-encoding
 cctools read --file test_files/iso88591.txt --detect-encoding
 cctools read --file test_files/windows1252.txt --detect-encoding
+
+# Test directory operations
+cctools listdir --path test_project/ --recursive --show-encoding
+cctools copydir --source test_project/ --dest backup/ --preserve-all
+cctools movedir --source backup/ --dest archive/
+
+# Test comprehensive workflows
+cctools mkdir --path testing/structure --parents
+cctools copy --source config.ini --dest testing/config_backup.ini
+cctools delete --file testing/temp.log --backup
 ```
 
 ## 🤝 Contributing
@@ -270,6 +384,19 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Cobra](https://github.com/spf13/cobra) - CLI framework
 - [chardet](https://github.com/saintfish/chardet) - Character encoding detection
 - [golang.org/x/text](https://golang.org/x/text) - Text processing
+
+---
+
+## 🏆 Recent Updates
+
+### Version 1.0.0 - Complete File & Directory Operations
+- ✅ **New File Operations**: `copy`, `move`, `delete` with encoding preservation
+- ✅ **New Directory Operations**: `mkdir`, `copydir`, `movedir`, `rmdir`, `listdir`
+- ✅ **Enhanced Safety**: Comprehensive backup and rollback systems
+- ✅ **Intelligent Analysis**: Encoding distribution analysis for entire projects
+- ✅ **Atomic Operations**: Complete success or full rollback for all operations
+- ✅ **Cross-Platform**: Full compatibility with Windows, Linux, and macOS
+- ✅ **100% Tested**: All operations tested with comprehensive test suite
 
 ---
 
