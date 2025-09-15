@@ -19,8 +19,16 @@ It provides commands for:
 - Editing files with string replacement
 - Multiple atomic edits on a single file
 - Previewing edits before applying them
+- Copying files while preserving encoding
+- Moving files while preserving encoding
+- Deleting files with optional backup
+- Creating directories with proper permissions
+- Copying directories recursively with encoding preservation
+- Moving directories with atomic rollback support
+- Removing directories with optional backup
+- Listing directory contents with encoding analysis
 
-All edit operations preserve the original file encoding automatically.`,
+All file and directory operations preserve the original file encoding automatically.`,
 	Version: "1.0.0",
 }
 

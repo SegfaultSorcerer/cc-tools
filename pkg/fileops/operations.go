@@ -419,3 +419,645 @@ func (f *FileOperations) FindSimilarMatches(content, target string) []string {
 func (f *FileOperations) FindBestMatch(content, target string) (int, string) {
 	return findBestMatch(content, target)
 }
+
+// CopyFile copies a file from source to destination, preserving encoding
+func (f *FileOperations) CopyFile(operation *models.CopyOperation) (*models.FileOperationResult, error) {
+	// Validate source file exists
+	if _, err := os.Stat(operation.SourcePath); os.IsNotExist(err) {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Source file does not exist",
+			Error:   err,
+		}, err
+	}
+
+	// Check if destination already exists and overwrite is not enabled
+	if _, err := os.Stat(operation.DestinationPath); err == nil && !operation.Overwrite {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Destination file already exists, use overwrite flag to replace",
+			Error:   fmt.Errorf("destination exists"),
+		}, fmt.Errorf("destination exists")
+	}
+
+	// Read source file with encoding detection
+	sourceInfo, err := f.ReadFile(operation.SourcePath)
+	if err != nil {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Failed to read source file",
+			Error:   err,
+		}, err
+	}
+
+	// Ensure destination directory exists
+	destDir := filepath.Dir(operation.DestinationPath)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Failed to create destination directory",
+			Error:   err,
+		}, err
+	}
+
+	// Copy file preserving original encoding
+	if err := os.WriteFile(operation.DestinationPath, sourceInfo.Content, 0644); err != nil {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Failed to write destination file",
+			Error:   err,
+		}, err
+	}
+
+	// If preserve mode is enabled, copy file permissions
+	if operation.PreserveMode {
+		sourceStats, err := os.Stat(operation.SourcePath)
+		if err == nil {
+			os.Chmod(operation.DestinationPath, sourceStats.Mode())
+		}
+	}
+
+	// Read destination file info for result
+	destInfo, _ := f.ReadFile(operation.DestinationPath)
+
+	return &models.FileOperationResult{
+		Success:    true,
+		Message:    fmt.Sprintf("File copied successfully from %s to %s", operation.SourcePath, operation.DestinationPath),
+		SourceInfo: sourceInfo,
+		TargetInfo: destInfo,
+	}, nil
+}
+
+// MoveFile moves a file from source to destination, preserving encoding
+func (f *FileOperations) MoveFile(operation *models.MoveOperation) (*models.FileOperationResult, error) {
+	// Validate source file exists
+	if _, err := os.Stat(operation.SourcePath); os.IsNotExist(err) {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Source file does not exist",
+			Error:   err,
+		}, err
+	}
+
+	// Check if destination already exists and overwrite is not enabled
+	if _, err := os.Stat(operation.DestinationPath); err == nil && !operation.Overwrite {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Destination file already exists, use overwrite flag to replace",
+			Error:   fmt.Errorf("destination exists"),
+		}, fmt.Errorf("destination exists")
+	}
+
+	// Read source file info before moving
+	sourceInfo, err := f.ReadFile(operation.SourcePath)
+	if err != nil {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Failed to read source file",
+			Error:   err,
+		}, err
+	}
+
+	// Create backup of source for rollback
+	backupPath := operation.SourcePath + ".move_backup"
+	if err := f.createBackup(operation.SourcePath, backupPath); err != nil {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Failed to create backup before move",
+			Error:   err,
+		}, err
+	}
+
+	// Ensure destination directory exists
+	destDir := filepath.Dir(operation.DestinationPath)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		os.Remove(backupPath)
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Failed to create destination directory",
+			Error:   err,
+		}, err
+	}
+
+	// Try direct rename first (most efficient if on same filesystem)
+	if err := os.Rename(operation.SourcePath, operation.DestinationPath); err != nil {
+		// If rename fails, do copy + delete
+		copyOp := &models.CopyOperation{
+			SourcePath:      operation.SourcePath,
+			DestinationPath: operation.DestinationPath,
+			PreserveMode:    true,
+			Overwrite:       operation.Overwrite,
+		}
+
+		result, err := f.CopyFile(copyOp)
+		if err != nil {
+			f.restoreBackup(backupPath, operation.SourcePath)
+			return result, err
+		}
+
+		// Delete source file after successful copy
+		if err := os.Remove(operation.SourcePath); err != nil {
+			// Copy succeeded but delete failed - clean up destination and restore source
+			os.Remove(operation.DestinationPath)
+			f.restoreBackup(backupPath, operation.SourcePath)
+			return &models.FileOperationResult{
+				Success: false,
+				Message: "Failed to remove source file after copy",
+				Error:   err,
+			}, err
+		}
+	}
+
+	// Remove backup on success
+	os.Remove(backupPath)
+
+	// Read destination file info for result
+	destInfo, _ := f.ReadFile(operation.DestinationPath)
+
+	return &models.FileOperationResult{
+		Success:    true,
+		Message:    fmt.Sprintf("File moved successfully from %s to %s", operation.SourcePath, operation.DestinationPath),
+		SourceInfo: sourceInfo,
+		TargetInfo: destInfo,
+	}, nil
+}
+
+// DeleteFile deletes a file with optional backup
+func (f *FileOperations) DeleteFile(operation *models.DeleteOperation) (*models.FileOperationResult, error) {
+	// Validate file exists
+	if _, err := os.Stat(operation.FilePath); os.IsNotExist(err) {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "File does not exist",
+			Error:   err,
+		}, err
+	}
+
+	// Read file info before deletion
+	fileInfo, err := f.ReadFile(operation.FilePath)
+	if err != nil {
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Failed to read file before deletion",
+			Error:   err,
+		}, err
+	}
+
+	var backupPath string
+
+	// Create backup if requested
+	if operation.CreateBackup {
+		if operation.BackupPath != "" {
+			backupPath = operation.BackupPath
+		} else {
+			backupPath = operation.FilePath + ".deleted_backup"
+		}
+
+		if err := f.createBackup(operation.FilePath, backupPath); err != nil {
+			return &models.FileOperationResult{
+				Success: false,
+				Message: "Failed to create backup before deletion",
+				Error:   err,
+			}, err
+		}
+	}
+
+	// Delete the file
+	if err := os.Remove(operation.FilePath); err != nil {
+		// If backup was created and deletion failed, remove the backup
+		if operation.CreateBackup && backupPath != "" {
+			os.Remove(backupPath)
+		}
+		return &models.FileOperationResult{
+			Success: false,
+			Message: "Failed to delete file",
+			Error:   err,
+		}, err
+	}
+
+	message := fmt.Sprintf("File deleted successfully: %s", operation.FilePath)
+	if operation.CreateBackup && backupPath != "" {
+		message += fmt.Sprintf(" (backup created at: %s)", backupPath)
+	}
+
+	return &models.FileOperationResult{
+		Success:    true,
+		Message:    message,
+		BackupPath: backupPath,
+		SourceInfo: fileInfo,
+	}, nil
+}
+
+// CreateDirectory creates a directory with optional parent creation
+func (f *FileOperations) CreateDirectory(operation *models.DirectoryOperation) (*models.DirectoryOperationResult, error) {
+	// Check if directory already exists
+	if _, err := os.Stat(operation.Path); err == nil {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: fmt.Sprintf("Directory already exists: %s", operation.Path),
+			Error:   fmt.Errorf("directory exists"),
+		}, fmt.Errorf("directory exists")
+	}
+
+	// Create directory
+	mode := os.FileMode(0755)
+	if operation.Mode != 0 {
+		mode = os.FileMode(operation.Mode)
+	}
+
+	var err error
+	if operation.CreateParents {
+		err = os.MkdirAll(operation.Path, mode)
+	} else {
+		err = os.Mkdir(operation.Path, mode)
+	}
+
+	if err != nil {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: fmt.Sprintf("Failed to create directory: %s", err.Error()),
+			Error:   err,
+		}, err
+	}
+
+	return &models.DirectoryOperationResult{
+		Success:       true,
+		Message:       fmt.Sprintf("Directory created successfully: %s", operation.Path),
+		ProcessedDirs: 1,
+	}, nil
+}
+
+// CopyDirectory copies a directory recursively preserving encoding
+func (f *FileOperations) CopyDirectory(operation *models.DirectoryCopyOperation) (*models.DirectoryOperationResult, error) {
+	// Validate source directory exists
+	sourceInfo, err := os.Stat(operation.SourcePath)
+	if os.IsNotExist(err) {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Source directory does not exist",
+			Error:   err,
+		}, err
+	}
+
+	if !sourceInfo.IsDir() {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Source path is not a directory",
+			Error:   fmt.Errorf("not a directory"),
+		}, fmt.Errorf("not a directory")
+	}
+
+	// Check if destination exists and handle overwrite
+	if _, err := os.Stat(operation.DestinationPath); err == nil && !operation.Overwrite {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Destination directory already exists, use overwrite flag",
+			Error:   fmt.Errorf("destination exists"),
+		}, fmt.Errorf("destination exists")
+	}
+
+	// Create destination directory
+	if err := os.MkdirAll(operation.DestinationPath, sourceInfo.Mode()); err != nil {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Failed to create destination directory",
+			Error:   err,
+		}, err
+	}
+
+	var processedFiles, processedDirs int
+	var totalSize int64
+	sourceEncoding := make(map[string]int)
+	targetEncoding := make(map[string]int)
+
+	// Walk through source directory
+	err = filepath.Walk(operation.SourcePath, func(srcPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Calculate relative path
+		relPath, err := filepath.Rel(operation.SourcePath, srcPath)
+		if err != nil {
+			return err
+		}
+
+		destPath := filepath.Join(operation.DestinationPath, relPath)
+
+		if info.IsDir() {
+			// Create directory
+			if err := os.MkdirAll(destPath, info.Mode()); err != nil {
+				return err
+			}
+			processedDirs++
+		} else {
+			// Check if we should skip existing files
+			if operation.SkipExisting {
+				if _, err := os.Stat(destPath); err == nil {
+					return nil // Skip existing file
+				}
+			}
+
+			// Read source file with encoding detection
+			fileInfo, err := f.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to read file %s: %w", srcPath, err)
+			}
+
+			// Track encoding
+			sourceEncoding[fileInfo.Encoding]++
+
+			// Ensure destination directory exists
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return err
+			}
+
+			// Copy file preserving encoding
+			if err := os.WriteFile(destPath, fileInfo.Content, info.Mode()); err != nil {
+				return fmt.Errorf("failed to write file %s: %w", destPath, err)
+			}
+
+			// Preserve timestamps if requested
+			if operation.PreserveAll {
+				os.Chtimes(destPath, info.ModTime(), info.ModTime())
+			}
+
+			// Track target encoding (should be same as source)
+			targetEncoding[fileInfo.Encoding]++
+			processedFiles++
+			totalSize += int64(len(fileInfo.Content))
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: fmt.Sprintf("Copy failed: %s", err.Error()),
+			Error:   err,
+		}, err
+	}
+
+	return &models.DirectoryOperationResult{
+		Success:        true,
+		Message:        fmt.Sprintf("Directory copied successfully from %s to %s (%d files, %d directories)", operation.SourcePath, operation.DestinationPath, processedFiles, processedDirs),
+		ProcessedFiles: processedFiles,
+		ProcessedDirs:  processedDirs,
+		TotalSize:      totalSize,
+		SourceInfo: &models.DirectoryInfo{
+			Path:       operation.SourcePath,
+			TotalFiles: processedFiles,
+			TotalSize:  totalSize,
+			Encodings:  sourceEncoding,
+		},
+		TargetInfo: &models.DirectoryInfo{
+			Path:       operation.DestinationPath,
+			TotalFiles: processedFiles,
+			TotalSize:  totalSize,
+			Encodings:  targetEncoding,
+		},
+	}, nil
+}
+
+// MoveDirectory moves a directory with rollback support
+func (f *FileOperations) MoveDirectory(operation *models.DirectoryMoveOperation) (*models.DirectoryOperationResult, error) {
+	// Try direct rename first (most efficient)
+	if err := os.Rename(operation.SourcePath, operation.DestinationPath); err == nil {
+		return &models.DirectoryOperationResult{
+			Success: true,
+			Message: fmt.Sprintf("Directory moved successfully from %s to %s", operation.SourcePath, operation.DestinationPath),
+		}, nil
+	}
+
+	// If rename fails, do copy + delete with rollback
+	copyOp := &models.DirectoryCopyOperation{
+		SourcePath:      operation.SourcePath,
+		DestinationPath: operation.DestinationPath,
+		PreserveAll:     true,
+		Overwrite:       operation.Overwrite,
+	}
+
+	result, err := f.CopyDirectory(copyOp)
+	if err != nil {
+		return result, err
+	}
+
+	// Remove source directory after successful copy
+	if err := os.RemoveAll(operation.SourcePath); err != nil {
+		// Copy succeeded but delete failed - clean up destination
+		os.RemoveAll(operation.DestinationPath)
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Failed to remove source directory after copy",
+			Error:   err,
+		}, err
+	}
+
+	result.Message = fmt.Sprintf("Directory moved successfully from %s to %s (%d files, %d directories)", operation.SourcePath, operation.DestinationPath, result.ProcessedFiles, result.ProcessedDirs)
+	return result, nil
+}
+
+// DeleteDirectory removes a directory with optional backup
+func (f *FileOperations) DeleteDirectory(operation *models.DirectoryDeleteOperation) (*models.DirectoryOperationResult, error) {
+	// Validate directory exists
+	dirInfo, err := os.Stat(operation.Path)
+	if os.IsNotExist(err) {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Directory does not exist",
+			Error:   err,
+		}, err
+	}
+
+	if !dirInfo.IsDir() {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Path is not a directory",
+			Error:   fmt.Errorf("not a directory"),
+		}, fmt.Errorf("not a directory")
+	}
+
+	var backupPath string
+	var processedFiles, processedDirs int
+
+	// Create backup if requested
+	if operation.CreateBackup {
+		if operation.BackupPath != "" {
+			backupPath = operation.BackupPath
+		} else {
+			backupPath = operation.Path + ".deleted_backup"
+		}
+
+		copyOp := &models.DirectoryCopyOperation{
+			SourcePath:      operation.Path,
+			DestinationPath: backupPath,
+			PreserveAll:     true,
+			Overwrite:       false,
+		}
+
+		result, err := f.CopyDirectory(copyOp)
+		if err != nil {
+			return &models.DirectoryOperationResult{
+				Success: false,
+				Message: "Failed to create backup before deletion",
+				Error:   err,
+			}, err
+		}
+		processedFiles = result.ProcessedFiles
+		processedDirs = result.ProcessedDirs
+	}
+
+	// Delete the directory
+	if operation.Recursive {
+		err = os.RemoveAll(operation.Path)
+	} else {
+		err = os.Remove(operation.Path)
+	}
+
+	if err != nil {
+		// If backup was created and deletion failed, remove the backup
+		if operation.CreateBackup && backupPath != "" {
+			os.RemoveAll(backupPath)
+		}
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Failed to delete directory",
+			Error:   err,
+		}, err
+	}
+
+	message := fmt.Sprintf("Directory deleted successfully: %s", operation.Path)
+	if operation.CreateBackup && backupPath != "" {
+		message += fmt.Sprintf(" (backup created at: %s)", backupPath)
+	}
+
+	return &models.DirectoryOperationResult{
+		Success:        true,
+		Message:        message,
+		BackupPath:     backupPath,
+		ProcessedFiles: processedFiles,
+		ProcessedDirs:  processedDirs,
+	}, nil
+}
+
+// ListDirectory lists directory contents with encoding detection
+func (f *FileOperations) ListDirectory(operation *models.DirectoryListOperation) (*models.DirectoryOperationResult, error) {
+	// Validate directory exists
+	if _, err := os.Stat(operation.Path); os.IsNotExist(err) {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: "Directory does not exist",
+			Error:   err,
+		}, err
+	}
+
+	var fileList []models.FileEntry
+	var processedFiles, processedDirs int
+	encodings := make(map[string]int)
+	fileTypes := make(map[string]int)
+
+	walkFunc := func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip hidden files unless requested
+		if !operation.ShowHidden && strings.HasPrefix(info.Name(), ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Apply filter if specified
+		if operation.Filter != "" {
+			matched, err := filepath.Match(operation.Filter, info.Name())
+			if err != nil || !matched {
+				if info.IsDir() && !operation.Recursive {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+		}
+
+		entry := models.FileEntry{
+			Path:  path,
+			Name:  info.Name(),
+			Size:  info.Size(),
+			IsDir: info.IsDir(),
+			Mode:  info.Mode().String(),
+		}
+
+		if info.IsDir() {
+			processedDirs++
+		} else {
+			processedFiles++
+
+			// Get file extension
+			ext := filepath.Ext(info.Name())
+			fileTypes[ext]++
+
+			// Detect encoding if requested
+			if operation.ShowEncoding {
+				if fileInfo, err := f.ReadFile(path); err == nil {
+					entry.Encoding = fileInfo.Encoding
+					encodings[fileInfo.Encoding]++
+				}
+			}
+		}
+
+		fileList = append(fileList, entry)
+
+		// If not recursive and this is a directory, skip its contents
+		if !operation.Recursive && info.IsDir() && path != operation.Path {
+			return filepath.SkipDir
+		}
+
+		return nil
+	}
+
+	var err error
+	if operation.Recursive {
+		err = filepath.Walk(operation.Path, walkFunc)
+	} else {
+		entries, err := os.ReadDir(operation.Path)
+		if err != nil {
+			return &models.DirectoryOperationResult{
+				Success: false,
+				Message: "Failed to read directory",
+				Error:   err,
+			}, err
+		}
+
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			walkFunc(filepath.Join(operation.Path, entry.Name()), info, nil)
+		}
+	}
+
+	if err != nil {
+		return &models.DirectoryOperationResult{
+			Success: false,
+			Message: fmt.Sprintf("Failed to list directory: %s", err.Error()),
+			Error:   err,
+		}, err
+	}
+
+	return &models.DirectoryOperationResult{
+		Success:        true,
+		Message:        fmt.Sprintf("Listed %d files and %d directories", processedFiles, processedDirs),
+		ProcessedFiles: processedFiles,
+		ProcessedDirs:  processedDirs,
+		FileList:       fileList,
+		SourceInfo: &models.DirectoryInfo{
+			Path:       operation.Path,
+			TotalFiles: processedFiles,
+			Encodings:  encodings,
+			FileTypes:  fileTypes,
+		},
+	}, nil
+}

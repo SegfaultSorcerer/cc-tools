@@ -26,3 +26,119 @@ type EditResult struct {
 	Message string
 	Error   error
 }
+
+// CopyOperation represents a file copy operation
+type CopyOperation struct {
+	SourcePath      string `json:"source_path"`
+	DestinationPath string `json:"destination_path"`
+	PreserveMode    bool   `json:"preserve_mode,omitempty"`
+	Overwrite       bool   `json:"overwrite,omitempty"`
+}
+
+// MoveOperation represents a file move operation
+type MoveOperation struct {
+	SourcePath      string `json:"source_path"`
+	DestinationPath string `json:"destination_path"`
+	Overwrite       bool   `json:"overwrite,omitempty"`
+}
+
+// DeleteOperation represents a file delete operation
+type DeleteOperation struct {
+	FilePath    string `json:"file_path"`
+	CreateBackup bool   `json:"create_backup,omitempty"`
+	BackupPath   string `json:"backup_path,omitempty"`
+}
+
+// FileOperationResult represents the result of file operations
+type FileOperationResult struct {
+	Success     bool
+	Message     string
+	Error       error
+	BackupPath  string // Path to backup file if created
+	SourceInfo  *FileInfo // Information about source file
+	TargetInfo  *FileInfo // Information about target file (for copy/move)
+}
+
+// DirectoryOperation represents a directory creation operation
+type DirectoryOperation struct {
+	Path        string `json:"path"`
+	CreateParents bool   `json:"create_parents,omitempty"`
+	Mode        int    `json:"mode,omitempty"`
+}
+
+// DirectoryCopyOperation represents a directory copy operation
+type DirectoryCopyOperation struct {
+	SourcePath      string `json:"source_path"`
+	DestinationPath string `json:"destination_path"`
+	PreserveAll     bool   `json:"preserve_all,omitempty"`
+	Overwrite       bool   `json:"overwrite,omitempty"`
+	SkipExisting    bool   `json:"skip_existing,omitempty"`
+}
+
+// DirectoryMoveOperation represents a directory move operation
+type DirectoryMoveOperation struct {
+	SourcePath      string `json:"source_path"`
+	DestinationPath string `json:"destination_path"`
+	Overwrite       bool   `json:"overwrite,omitempty"`
+}
+
+// DirectoryDeleteOperation represents a directory delete operation
+type DirectoryDeleteOperation struct {
+	Path         string `json:"path"`
+	Recursive    bool   `json:"recursive,omitempty"`
+	CreateBackup bool   `json:"create_backup,omitempty"`
+	BackupPath   string `json:"backup_path,omitempty"`
+}
+
+// DirectoryListOperation represents a directory listing operation
+type DirectoryListOperation struct {
+	Path           string `json:"path"`
+	Recursive      bool   `json:"recursive,omitempty"`
+	ShowEncoding   bool   `json:"show_encoding,omitempty"`
+	Filter         string `json:"filter,omitempty"`
+	ShowHidden     bool   `json:"show_hidden,omitempty"`
+}
+
+// DirectoryInfo holds information about a directory
+type DirectoryInfo struct {
+	Path          string
+	TotalFiles    int
+	TotalSize     int64
+	Encodings     map[string]int // encoding -> count
+	FileTypes     map[string]int // extension -> count
+	Subdirectories []string
+}
+
+// FileEntry represents a file in directory listing
+type FileEntry struct {
+	Path     string
+	Name     string
+	Size     int64
+	IsDir    bool
+	Mode     string
+	Encoding string
+}
+
+// DirectoryOperationResult represents the result of directory operations
+type DirectoryOperationResult struct {
+	Success        bool
+	Message        string
+	Error          error
+	BackupPath     string
+	ProcessedFiles int
+	ProcessedDirs  int
+	TotalSize      int64
+	SourceInfo     *DirectoryInfo
+	TargetInfo     *DirectoryInfo
+	FileList       []FileEntry
+}
+
+// ProgressInfo represents progress information for long operations
+type ProgressInfo struct {
+	CurrentFile   string
+	FilesProcessed int
+	TotalFiles    int
+	BytesProcessed int64
+	TotalBytes    int64
+	StartTime     int64
+}
