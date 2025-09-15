@@ -64,7 +64,10 @@ func runEditCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if !result.Success {
-		return fmt.Errorf("edit operation failed: %s", result.Message)
+		// Display the detailed message
+		fmt.Println("Edit operation failed:")
+		fmt.Println(result.Message)
+		return fmt.Errorf("operation unsuccessful")
 	}
 
 	// Get verbose flag from parent command

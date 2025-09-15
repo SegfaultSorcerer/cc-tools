@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"cctools/internal/models"
 	"cctools/pkg/fileops"
@@ -54,6 +56,29 @@ func init() {
 	multiEditCmd.MarkFlagRequired("edits-file")
 }
 
+// fixWindowsPathsInJSON attempts to fix Windows paths that aren't properly escaped in JSON
+func fixWindowsPathsInJSON(data []byte) []byte {
+	content := string(data)
+
+	// Regex para encontrar paths Windows mal escapados em file_path
+	// Procura por padrões como "C:\Path" e os converte para "C:\\Path"
+	pathRegex := regexp.MustCompile(`"file_path"\s*:\s*"([C-Z]:\\[^"]*)"`)
+
+	content = pathRegex.ReplaceAllStringFunc(content, func(match string) string {
+		// Extrai o path da string
+		parts := strings.Split(match, `"`)
+		if len(parts) >= 4 {
+			path := parts[3]
+			// Escapa as barras invertidas que não estão já escapadas
+			fixedPath := strings.ReplaceAll(path, `\`, `\\`)
+			return fmt.Sprintf(`"file_path": "%s"`, fixedPath)
+		}
+		return match
+	})
+
+	return []byte(content)
+}
+
 func runMultiEditCmd(cmd *cobra.Command, args []string) error {
 	// Read the edits file
 	editsData, err := os.ReadFile(multiEditFile)
@@ -64,7 +89,17 @@ func runMultiEditCmd(cmd *cobra.Command, args []string) error {
 	// Parse the JSON
 	var editRequest models.MultiEditRequest
 	if err := json.Unmarshal(editsData, &editRequest); err != nil {
-		return fmt.Errorf("failed to parse edits file: %w", err)
+		// Se falhou o parsing, tenta corrigir paths Windows mal escapados
+		if strings.Contains(err.Error(), "invalid character") && strings.Contains(err.Error(), "in string escape code") {
+			fixedData := fixWindowsPathsInJSON(editsData)
+			if err2 := json.Unmarshal(fixedData, &editRequest); err2 != nil {
+				return fmt.Errorf("failed to parse edits file even after attempting Windows path fix.\nOriginal error: %w\nSuggestion: ensure Windows paths use double backslashes (e.g., \"C:\\\\path\\\\to\\\\file\")", err)
+			}
+			// Se conseguiu corrigir, informa ao usuário
+			fmt.Println("Info: Windows path automatically corrected in JSON")
+		} else {
+			return fmt.Errorf("failed to parse edits file: %w", err)
+		}
 	}
 
 	// Validate the request
@@ -76,8 +111,11 @@ func runMultiEditCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("at least one edit operation is required")
 	}
 
+	// Normalize path separators for cross-platform compatibility
+	normalizedPath := filepath.FromSlash(editRequest.FilePath)
+
 	// Convert to absolute path if relative
-	absPath, err := filepath.Abs(editRequest.FilePath)
+	absPath, err := filepath.Abs(normalizedPath)
 	if err != nil {
 		return fmt.Errorf("failed to resolve absolute path: %w", err)
 	}
@@ -103,7 +141,10 @@ func runMultiEditCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	if !result.Success {
-		return fmt.Errorf("multi-edit operation failed: %s", result.Message)
+		// Display the detailed message
+		fmt.Println("Multi-edit operation failed:")
+		fmt.Println(result.Message)
+		return fmt.Errorf("operation unsuccessful")
 	}
 
 	// Get verbose flag from parent command

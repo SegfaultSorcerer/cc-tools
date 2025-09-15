@@ -18,6 +18,7 @@ It provides commands for:
 - Writing files with specified encoding
 - Editing files with string replacement
 - Multiple atomic edits on a single file
+- Previewing edits before applying them
 
 All edit operations preserve the original file encoding automatically.`,
 	Version: "1.0.0",

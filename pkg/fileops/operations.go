@@ -5,7 +5,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"cctools/internal/models"
 	"cctools/pkg/encoding"
@@ -96,23 +98,62 @@ func (f *FileOperations) EditFile(filePath, oldString, newString string, replace
 	// Perform replacement
 	var newContent string
 	if replaceAll {
+		count := strings.Count(content, oldString)
+		if count == 0 {
+			// Try to find similar matches for better error message
+			matches := findStringMatches(content, oldString)
+			errorMsg := fmt.Sprintf("String '%s' not found in file", oldString)
+			if len(matches) > 0 {
+				errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
+			}
+			return &models.EditResult{
+				Success: false,
+				Message: errorMsg,
+				Error:   fmt.Errorf("old string not found"),
+			}, nil
+		}
 		newContent = strings.ReplaceAll(content, oldString, newString)
 	} else {
 		// Check if old string exists and is unique
 		count := strings.Count(content, oldString)
 		if count == 0 {
+			// Try to find similar matches for better error message
+			matches := findStringMatches(content, oldString)
+			errorMsg := fmt.Sprintf("String '%s' not found in file", oldString)
+			if len(matches) > 0 {
+				errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
+			}
+
+			// Try fuzzy matching
+			if lineIndex, matchedLine := findBestMatch(content, oldString); lineIndex != -1 {
+				errorMsg += fmt.Sprintf("\nBest fuzzy match found at line %d: %q", lineIndex+1, matchedLine)
+			}
+
 			return &models.EditResult{
 				Success: false,
-				Message: "String not found in file",
-				Error:   fmt.Errorf("old string '%s' not found", oldString),
-			}, fmt.Errorf("old string not found")
+				Message: errorMsg,
+				Error:   fmt.Errorf("old string not found"),
+			}, nil
 		}
 		if count > 1 {
+			// Show context for all matches
+			lines := strings.Split(content, "\n")
+			var matchLines []string
+			for i, line := range lines {
+				if strings.Contains(line, oldString) {
+					matchLines = append(matchLines, fmt.Sprintf("Line %d: %q", i+1, strings.TrimSpace(line)))
+				}
+			}
+			errorMsg := fmt.Sprintf("String '%s' appears %d times in file, use --replace-all flag", oldString, count)
+			if len(matchLines) > 0 {
+				errorMsg += "\nMatches found at:\n" + strings.Join(matchLines, "\n")
+			}
+
 			return &models.EditResult{
 				Success: false,
-				Message: "String is not unique in file, use --replace-all flag",
-				Error:   fmt.Errorf("old string '%s' appears %d times", oldString, count),
-			}, fmt.Errorf("string not unique")
+				Message: errorMsg,
+				Error:   fmt.Errorf("string not unique"),
+			}, nil
 		}
 		newContent = strings.Replace(content, oldString, newString, 1)
 	}
@@ -189,18 +230,45 @@ func (f *FileOperations) MultiEditFile(request *models.MultiEditRequest) (*model
 			count := strings.Count(workingContent, edit.OldString)
 			if count == 0 {
 				f.restoreBackup(backupPath, request.FilePath)
+
+				// Enhanced error message with similar matches
+				matches := findStringMatches(workingContent, edit.OldString)
+				errorMsg := fmt.Sprintf("Edit %d failed: string '%s' not found", i+1, edit.OldString)
+				if len(matches) > 0 {
+					errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
+				}
+
+				// Try fuzzy matching
+				if lineIndex, matchedLine := findBestMatch(workingContent, edit.OldString); lineIndex != -1 {
+					errorMsg += fmt.Sprintf("\nBest fuzzy match found at line %d: %q", lineIndex+1, matchedLine)
+				}
+
 				return &models.EditResult{
 					Success: false,
-					Message: fmt.Sprintf("Edit %d failed: string not found", i+1),
-					Error:   fmt.Errorf("old string '%s' not found in edit %d", edit.OldString, i+1),
+					Message: errorMsg,
+					Error:   fmt.Errorf("string not found in edit %d", i+1),
 				}, fmt.Errorf("string not found in edit %d", i+1)
 			}
 			if count > 1 {
 				f.restoreBackup(backupPath, request.FilePath)
+
+				// Show context for all matches
+				lines := strings.Split(workingContent, "\n")
+				var matchLines []string
+				for j, line := range lines {
+					if strings.Contains(line, edit.OldString) {
+						matchLines = append(matchLines, fmt.Sprintf("Line %d: %q", j+1, strings.TrimSpace(line)))
+					}
+				}
+				errorMsg := fmt.Sprintf("Edit %d failed: string '%s' appears %d times, use replace_all: true", i+1, edit.OldString, count)
+				if len(matchLines) > 0 {
+					errorMsg += "\nMatches found at:\n" + strings.Join(matchLines, "\n")
+				}
+
 				return &models.EditResult{
 					Success: false,
-					Message: fmt.Sprintf("Edit %d failed: string not unique", i+1),
-					Error:   fmt.Errorf("old string '%s' appears %d times in edit %d", edit.OldString, count, i+1),
+					Message: errorMsg,
+					Error:   fmt.Errorf("string not unique in edit %d", i+1),
 				}, fmt.Errorf("string not unique in edit %d", i+1)
 			}
 			workingContent = strings.Replace(workingContent, edit.OldString, edit.NewString, 1)
@@ -249,4 +317,105 @@ func (f *FileOperations) createBackup(originalPath, backupPath string) error {
 // restoreBackup restores a file from backup
 func (f *FileOperations) restoreBackup(backupPath, originalPath string) error {
 	return os.Rename(backupPath, originalPath)
+}
+
+// normalizeWhitespace normalizes whitespace in a string for better matching
+func normalizeWhitespace(s string) string {
+	// Replace multiple whitespaces with single spaces
+	re := regexp.MustCompile(`\s+`)
+	normalized := re.ReplaceAllString(s, " ")
+	return strings.TrimSpace(normalized)
+}
+
+// findBestMatch attempts to find the best match for a string, considering encoding issues
+func findBestMatch(content, target string) (int, string) {
+	// First try exact match
+	if index := strings.Index(content, target); index != -1 {
+		return index, target
+	}
+
+	// Try with normalized whitespace
+	normalizedTarget := normalizeWhitespace(target)
+	lines := strings.Split(content, "\n")
+
+	for i, line := range lines {
+		normalizedLine := normalizeWhitespace(line)
+		if strings.Contains(normalizedLine, normalizedTarget) {
+			return i, line
+		}
+	}
+
+	// Try fuzzy matching - remove accents and special characters
+	simplifiedTarget := simplifyString(target)
+	for i, line := range lines {
+		simplifiedLine := simplifyString(line)
+		if strings.Contains(simplifiedLine, simplifiedTarget) {
+			return i, line
+		}
+	}
+
+	return -1, ""
+}
+
+// simplifyString removes accents and special characters for fuzzy matching
+func simplifyString(s string) string {
+	// Convert to runes for proper unicode handling
+	runes := []rune(s)
+	result := make([]rune, 0, len(runes))
+
+	for _, r := range runes {
+		// Skip combining marks (accents)
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		// Convert to lowercase
+		result = append(result, unicode.ToLower(r))
+	}
+
+	return string(result)
+}
+
+// findStringMatches returns all possible matches with context
+func findStringMatches(content, target string) []string {
+	var matches []string
+
+	// Exact matches
+	count := strings.Count(content, target)
+	if count > 0 {
+		matches = append(matches, fmt.Sprintf("Exact matches: %d", count))
+	}
+
+	// Look for similar strings (lines containing target words)
+	targetWords := strings.Fields(target)
+	if len(targetWords) > 1 {
+		lines := strings.Split(content, "\n")
+		for i, line := range lines {
+			wordMatches := 0
+			for _, word := range targetWords {
+				if strings.Contains(line, word) {
+					wordMatches++
+				}
+			}
+			if wordMatches > 0 && wordMatches < len(targetWords) {
+				matches = append(matches, fmt.Sprintf("Line %d (partial): %q", i+1, strings.TrimSpace(line)))
+			}
+		}
+	}
+
+	return matches
+}
+
+// DecodeFileContent is a public wrapper for decoding file content
+func (f *FileOperations) DecodeFileContent(fileInfo *models.FileInfo) (string, error) {
+	return encoding.DecodeBytes(fileInfo.Content, fileInfo.Encoding)
+}
+
+// FindSimilarMatches is a public wrapper for finding similar matches
+func (f *FileOperations) FindSimilarMatches(content, target string) []string {
+	return findStringMatches(content, target)
+}
+
+// FindBestMatch is a public wrapper for finding the best match
+func (f *FileOperations) FindBestMatch(content, target string) (int, string) {
+	return findBestMatch(content, target)
 }
