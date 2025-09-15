@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Nota: O agente que interage com este repositório deve se comunicar em Português do Brasil (PT-BR) em todas as suas interações.
+
 ## Project Overview
 
 CCTools é uma ferramenta CLI em Go para edição de arquivos que **preserva automaticamente a codificação original** dos arquivos durante as operações. É especialmente útil para trabalhar com códigos legados, projetos internacionais e arquivos com diferentes codificações de caracteres.
