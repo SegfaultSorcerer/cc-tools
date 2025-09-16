@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/saintfish/chardet"
 	"golang.org/x/text/encoding"
@@ -36,8 +37,8 @@ func (d *Detector) DetectFileEncoding(filePath string) (string, error) {
 	}
 	defer file.Close()
 
-	// Read first 1024 bytes for detection
-	buffer := make([]byte, 1024)
+	// Read larger sample for better detection (4096 bytes)
+	buffer := make([]byte, 4096)
 	n, err := file.Read(buffer)
 	if err != nil && err != io.EOF {
 		return "", fmt.Errorf("failed to read file: %w", err)
@@ -49,10 +50,45 @@ func (d *Detector) DetectFileEncoding(filePath string) (string, error) {
 	}
 
 	if result == nil {
+		// Enhanced detection for Pascal/Delphi files
+		if d.looksLikePascalFile(buffer[:n]) {
+			return "ISO-8859-1", nil // Common encoding for legacy Delphi files
+		}
 		return "UTF-8", nil // Default to UTF-8 if detection fails
 	}
 
+	// Additional check for Pascal files that might be misdetected
+	if d.looksLikePascalFile(buffer[:n]) && (result.Charset == "UTF-8" || result.Charset == "ascii") {
+		// For Pascal files with ASCII/UTF-8 detection, check if it might actually be ISO-8859-1
+		if d.containsExtendedLatin1(buffer[:n]) {
+			return "ISO-8859-1", nil
+		}
+	}
+
 	return result.Charset, nil
+}
+
+// looksLikePascalFile checks if the content appears to be Pascal/Delphi code
+func (d *Detector) looksLikePascalFile(data []byte) bool {
+	content := string(data)
+	keywords := []string{"unit", "interface", "implementation", "program", "procedure", "function", "type", "var", "const", "begin", "end."}
+
+	for _, keyword := range keywords {
+		if strings.Contains(strings.ToLower(content), keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsExtendedLatin1 checks for characters that suggest ISO-8859-1 encoding
+func (d *Detector) containsExtendedLatin1(data []byte) bool {
+	for _, b := range data {
+		if b >= 0x80 && b <= 0xFF { // Extended Latin-1 range
+			return true
+		}
+	}
+	return false
 }
 
 // GetEncoder returns the appropriate encoder for the given charset

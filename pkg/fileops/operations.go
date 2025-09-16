@@ -577,7 +577,7 @@ func detectCodeLanguage(filePath string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
 
 	switch ext {
-	case ".pas", ".pp", ".inc":
+	case ".pas", ".pp", ".inc", ".dpr", ".dpk":
 		return "pascal"
 	case ".js", ".ts", ".jsx", ".tsx":
 		return "javascript"
@@ -598,6 +598,12 @@ func detectCodeLanguage(filePath string) string {
 	case ".rs":
 		return "rust"
 	default:
+		// Also try to detect from content if extension is not recognized
+		if strings.Contains(strings.ToLower(filePath), "unit") ||
+		   strings.Contains(strings.ToLower(filePath), "interface") ||
+		   strings.Contains(strings.ToLower(filePath), "implementation") {
+			return "pascal"
+		}
 		return "generic"
 	}
 }
@@ -842,7 +848,7 @@ func (f *FileOperations) advancedStringMatch(content, target string, options *mo
 	lines := strings.Split(content, "\n")
 
 	// Auto-detect language if not specified
-	if options.SmartCode && options.CodeLanguage == "" {
+	if options.CodeLanguage == "" {
 		options.CodeLanguage = detectCodeLanguage(filePath)
 	}
 
@@ -932,10 +938,26 @@ func (f *FileOperations) advancedStringMatch(content, target string, options *mo
 		}
 	}
 
-	// Strategy 6: Enhanced fuzzy matching
+	// Strategy 6: Multi-line block matching for code
+	if strings.Contains(target, "\n") {
+		if options.DebugMode {
+			fmt.Printf("🔍 DEBUG: Strategy 6 - Trying multi-line block matching...\n")
+		}
+		if matches := f.findMultiLineBlockMatches(content, target, lines, options); len(matches) > 0 {
+			if options.DebugMode {
+				fmt.Printf("✅ DEBUG: Multi-line block match found at line %d\n", matches[0].LineNumber)
+			}
+			return &matches[0], nil
+		}
+		if options.DebugMode {
+			fmt.Println("❌ DEBUG: Multi-line block matching failed")
+		}
+	}
+
+	// Strategy 7: Enhanced fuzzy matching
 	if options.FuzzyMatch {
 		if options.DebugMode {
-			fmt.Printf("🔍 DEBUG: Strategy 6 - Trying fuzzy matching (threshold: %.2f)...\n", options.SimilarityThreshold)
+			fmt.Printf("🔍 DEBUG: Strategy 7 - Trying fuzzy matching (threshold: %.2f)...\n", options.SimilarityThreshold)
 		}
 		if matches := f.findEnhancedFuzzyMatches(content, target, lines, options); len(matches) > 0 {
 			if options.DebugMode {
@@ -948,10 +970,10 @@ func (f *FileOperations) advancedStringMatch(content, target string, options *mo
 		}
 	}
 
-	// Strategy 7: Aggressive fuzzy matching (NEW)
+	// Strategy 8: Aggressive fuzzy matching (NEW)
 	if options.AggressiveFuzzy {
 		if options.DebugMode {
-			fmt.Printf("🔍 DEBUG: Strategy 7 - Trying aggressive fuzzy matching (threshold: %.2f)...\n", options.SimilarityThreshold)
+			fmt.Printf("🔍 DEBUG: Strategy 8 - Trying aggressive fuzzy matching (threshold: %.2f)...\n", options.SimilarityThreshold)
 		}
 		if matches := f.findAggressiveFuzzyMatches(content, target, lines, options); len(matches) > 0 {
 			if options.DebugMode {
@@ -975,6 +997,32 @@ func (f *FileOperations) advancedStringMatch(content, target string, options *mo
 func (f *FileOperations) findExactMatches(content, target string, lines []string) []models.MatchInfo {
 	var matches []models.MatchInfo
 
+	// First, try to find multi-line exact matches
+	if strings.Contains(target, "\n") {
+		targetLines := strings.Split(target, "\n")
+		targetLineCount := len(targetLines)
+
+		for i := 0; i <= len(lines)-targetLineCount; i++ {
+			block := strings.Join(lines[i:i+targetLineCount], "\n")
+			if block == target {
+				// Get extended context for better disambiguation
+				contextLines := f.getLineContext(lines, i+targetLineCount/2, 5)
+
+				// Calculate uniqueness score based on surrounding context
+				uniquenessScore := f.calculateMatchUniqueness(lines, i+targetLineCount/2, target)
+
+				matches = append(matches, models.MatchInfo{
+					LineNumber:     i + 1,
+					LineText:       lines[i], // First line of the block
+					MatchText:      target,
+					Context:        contextLines,
+					Uniqueness:     uniquenessScore,
+				})
+			}
+		}
+	}
+
+	// Then, try single-line matches
 	for i, line := range lines {
 		if strings.Contains(line, target) {
 			// Get extended context for better disambiguation
@@ -1165,6 +1213,54 @@ func (f *FileOperations) findEnhancedFuzzyMatches(content, target string, lines 
 	// If no line matches, try multi-line blocks
 	if len(matches) == 0 {
 		matches = f.findMultiLineMatches(content, target, lines, options)
+	}
+
+	return matches
+}
+
+// findMultiLineBlockMatches finds exact multi-line block matches
+func (f *FileOperations) findMultiLineBlockMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	targetLines := strings.Split(target, "\n")
+	targetLineCount := len(targetLines)
+
+	if targetLineCount == 0 {
+		return matches
+	}
+
+	// Try to find exact multi-line match
+	for i := 0; i <= len(lines)-targetLineCount; i++ {
+		block := strings.Join(lines[i:i+targetLineCount], "\n")
+
+		// Try exact match first
+		if block == target {
+			context := f.getLineContext(lines, i+targetLineCount/2, 3)
+			matches = append(matches, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   lines[i],
+				MatchText:  target,
+				Context:    context,
+			})
+			return matches // Return first exact match
+		}
+
+		// Try normalized match for code
+		if options.CodeLanguage == "pascal" || options.AutoNormalize {
+			normalizedBlock := normalizeCodeBlock(block, options.CodeLanguage)
+			normalizedTarget := normalizeCodeBlock(target, options.CodeLanguage)
+
+			if normalizedBlock == normalizedTarget {
+				context := f.getLineContext(lines, i+targetLineCount/2, 3)
+				matches = append(matches, models.MatchInfo{
+					LineNumber: i + 1,
+					LineText:   lines[i],
+					MatchText:  block, // Return original block, not normalized
+					Context:    context,
+				})
+				return matches // Return first normalized match
+			}
+		}
 	}
 
 	return matches
@@ -1885,30 +1981,82 @@ func (f *FileOperations) findAllMatches(content, target string, options *models.
 
 // replaceAllMatches replaces all matched strings
 func (f *FileOperations) replaceAllMatches(content string, matches []models.MatchInfo, newString string) string {
-	lines := strings.Split(content, "\n")
+	result := content
 
-	// Process matches in reverse order to maintain line numbers
+	// Process matches in reverse order to maintain string positions
 	for i := len(matches) - 1; i >= 0; i-- {
 		match := matches[i]
-		lineIndex := match.LineNumber - 1
-		if lineIndex >= 0 && lineIndex < len(lines) {
-			lines[lineIndex] = strings.Replace(lines[lineIndex], match.MatchText, newString, 1)
+		if strings.Contains(match.MatchText, "\n") {
+			// Multi-line match - use safe replacement to preserve formatting
+			result = f.safeMultiLineReplace(result, match.MatchText, newString)
+		} else {
+			// Single line match - replace line by line
+			lines := strings.Split(result, "\n")
+			lineIndex := match.LineNumber - 1
+			if lineIndex >= 0 && lineIndex < len(lines) {
+				lines[lineIndex] = strings.Replace(lines[lineIndex], match.MatchText, newString, 1)
+			}
+			result = strings.Join(lines, "\n")
 		}
 	}
 
-	return strings.Join(lines, "\n")
+	return result
 }
 
 // replaceSingleMatch replaces a single matched string
 func (f *FileOperations) replaceSingleMatch(content string, match *models.MatchInfo, newString string) string {
-	lines := strings.Split(content, "\n")
-	lineIndex := match.LineNumber - 1
+	if strings.Contains(match.MatchText, "\n") {
+		// Multi-line match - use safe replacement to preserve formatting
+		return f.safeMultiLineReplace(content, match.MatchText, newString)
+	} else {
+		// Single line match - replace line by line
+		lines := strings.Split(content, "\n")
+		lineIndex := match.LineNumber - 1
 
-	if lineIndex >= 0 && lineIndex < len(lines) {
-		lines[lineIndex] = strings.Replace(lines[lineIndex], match.MatchText, newString, 1)
+		if lineIndex >= 0 && lineIndex < len(lines) {
+			lines[lineIndex] = strings.Replace(lines[lineIndex], match.MatchText, newString, 1)
+		}
+
+		return strings.Join(lines, "\n")
+	}
+}
+
+// safeMultiLineReplace safely replaces multi-line blocks preserving formatting
+func (f *FileOperations) safeMultiLineReplace(content, oldText, newText string) string {
+	// Split both content and old text into lines for precise replacement
+	contentLines := strings.Split(content, "\n")
+	oldLines := strings.Split(oldText, "\n")
+
+	if len(oldLines) == 0 {
+		return content
 	}
 
-	return strings.Join(lines, "\n")
+	// Find the starting position of the old text in the content
+	for i := 0; i <= len(contentLines)-len(oldLines); i++ {
+		match := true
+		for j := 0; j < len(oldLines); j++ {
+			if contentLines[i+j] != oldLines[j] {
+				match = false
+				break
+			}
+		}
+
+		if match {
+			// Found the match, now replace it safely
+			newLines := strings.Split(newText, "\n")
+
+			// Replace the lines
+			result := make([]string, 0, len(contentLines)-len(oldLines)+len(newLines))
+			result = append(result, contentLines[:i]...)
+			result = append(result, newLines...)
+			result = append(result, contentLines[i+len(oldLines):]...)
+
+			return strings.Join(result, "\n")
+		}
+	}
+
+	// Fallback to simple replacement if precise matching fails
+	return strings.Replace(content, oldText, newText, 1)
 }
 
 // handleNoMatchesFound handles the case when no matches are found
@@ -2638,6 +2786,22 @@ func min(a, b int) int {
 	return b
 }
 
+// max returns the maximum of two integers
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// maxFloat64 returns the maximum of two float64 values
+func maxFloat64(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // calculateMatchUniqueness calculates a uniqueness score for a match based on surrounding context
 func (f *FileOperations) calculateMatchUniqueness(lines []string, lineIndex int, target string) float64 {
 	// Get surrounding context (more context = better uniqueness)
@@ -2718,6 +2882,6 @@ func (f *FileOperations) calculateMatchUniqueness(lines []string, lineIndex int,
 		score += 25.0 // Bonus for complete Somar function pattern
 	}
 
-	return max(0, score)
+	return maxFloat64(0, score)
 }
 
