@@ -101,7 +101,7 @@ func (f *FileOperations) EditFileWithOptions(filePath, oldString, newString stri
 	}
 
 	// Try advanced matching first
-	matchInfo, matchErr := f.advancedStringMatch(content, oldString, options)
+	matchInfo, matchErr := f.advancedStringMatch(content, oldString, options, fileInfo.Path)
 
 	// If preview mode, show what would be changed
 	if preview {
@@ -141,7 +141,7 @@ func (f *FileOperations) EditFileWithOptions(filePath, oldString, newString stri
 			// Find all matches using advanced matching
 			allMatches = f.findAllMatches(content, oldString, options)
 			if len(allMatches) == 0 {
-				return f.handleNoMatchesFound(content, oldString)
+				return f.handleNoMatchesFound(content, oldString, options)
 			}
 			newContent = f.replaceAllMatches(content, allMatches, newString)
 		} else {
@@ -153,7 +153,7 @@ func (f *FileOperations) EditFileWithOptions(filePath, oldString, newString stri
 		// Fall back to exact string matching
 		count := strings.Count(content, oldString)
 		if count == 0 {
-			return f.handleNoMatchesFound(content, oldString)
+			return f.handleNoMatchesFound(content, oldString, options)
 		}
 		if count > 1 && !replaceAll {
 			return f.handleMultipleMatches(content, oldString, count)
@@ -254,7 +254,7 @@ func (f *FileOperations) MultiEditFile(request *models.MultiEditRequest) (*model
 		}
 
 		// Try advanced matching
-		if matchInfo, matchErr := f.advancedStringMatch(workingContent, edit.OldString, options); matchErr == nil {
+		if matchInfo, matchErr := f.advancedStringMatch(workingContent, edit.OldString, options, request.FilePath); matchErr == nil {
 			// Success - apply the edit
 			if edit.ReplaceAll {
 				matches := f.findAllMatches(workingContent, edit.OldString, options)
@@ -338,7 +338,7 @@ func (f *FileOperations) performDryRun(content string, request *models.MultiEdit
 		}
 
 		// Try to find matches
-		if matchInfo, matchErr := f.advancedStringMatch(content, edit.OldString, options); matchErr == nil {
+		if matchInfo, matchErr := f.advancedStringMatch(content, edit.OldString, options, request.FilePath); matchErr == nil {
 			if edit.ReplaceAll {
 				matches := f.findAllMatches(content, edit.OldString, options)
 				previewParts = append(previewParts, fmt.Sprintf("  ✓ Would replace %d occurrence(s)", len(matches)))
@@ -512,6 +512,177 @@ func chunkString(s string, maxSize int) []string {
 	return chunks
 }
 
+// detectCodeLanguage attempts to detect the programming language from file extension
+func detectCodeLanguage(filePath string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	switch ext {
+	case ".pas", ".pp", ".inc":
+		return "pascal"
+	case ".js", ".ts", ".jsx", ".tsx":
+		return "javascript"
+	case ".py":
+		return "python"
+	case ".go":
+		return "go"
+	case ".java":
+		return "java"
+	case ".cpp", ".cc", ".cxx", ".c":
+		return "c++"
+	case ".cs":
+		return "csharp"
+	case ".php":
+		return "php"
+	case ".rb":
+		return "ruby"
+	case ".rs":
+		return "rust"
+	default:
+		return "generic"
+	}
+}
+
+// normalizeCodeBlock normalizes a code block for better matching based on language
+func normalizeCodeBlock(code, language string) string {
+	lines := strings.Split(code, "\n")
+	var normalized []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue // Skip empty lines for matching purposes
+		}
+
+		// Language-specific normalization
+		switch language {
+		case "pascal":
+			// Normalize Pascal/Delphi code
+			trimmed = normalizePascalLine(trimmed)
+		case "javascript", "java", "c++", "csharp":
+			// Normalize C-style languages
+			trimmed = normalizeCStyleLine(trimmed)
+		}
+
+		normalized = append(normalized, trimmed)
+	}
+
+	return strings.Join(normalized, "\n")
+}
+
+// normalizePascalLine normalizes a Pascal/Delphi line for matching
+func normalizePascalLine(line string) string {
+	// Remove excess whitespace around common Pascal tokens
+	patterns := []struct {
+		pattern     string
+		replacement string
+	}{
+		{`\s*:\s*`, ": "},          // procedure declarations
+		{`\s*;\s*`, ";"},           // statement separators
+		{`\s*\(\s*`, "("},          // function calls
+		{`\s*\)\s*`, ")"},          // function calls
+		{`\s*:=\s*`, " := "},       // assignments
+		{`\s*=\s*`, " = "},         // comparisons
+		{`\s*<>\s*`, " <> "},       // not equal
+		{`\s*<\s*`, " < "},         // less than
+		{`\s*>\s*`, " > "},         // greater than
+		{`\s+`, " "},               // multiple spaces to single
+	}
+
+	result := line
+	for _, p := range patterns {
+		re := regexp.MustCompile(p.pattern)
+		result = re.ReplaceAllString(result, p.replacement)
+	}
+
+	return strings.TrimSpace(result)
+}
+
+// normalizeCStyleLine normalizes a C-style language line for matching
+func normalizeCStyleLine(line string) string {
+	// Remove excess whitespace around common C-style tokens
+	patterns := []struct {
+		pattern     string
+		replacement string
+	}{
+		{`\s*{\s*`, " {"},          // opening braces
+		{`\s*}\s*`, "}"},           // closing braces
+		{`\s*;\s*`, ";"},           // statement separators
+		{`\s*\(\s*`, "("},          // function calls
+		{`\s*\)\s*`, ")"},          // function calls
+		{`\s*=\s*`, " = "},         // assignments
+		{`\s*==\s*`, " == "},       // comparisons
+		{`\s*!=\s*`, " != "},       // not equal
+		{`\s+`, " "},               // multiple spaces to single
+	}
+
+	result := line
+	for _, p := range patterns {
+		re := regexp.MustCompile(p.pattern)
+		result = re.ReplaceAllString(result, p.replacement)
+	}
+
+	return strings.TrimSpace(result)
+}
+
+// extractCodeStructure attempts to extract structural information from code
+func extractCodeStructure(code, language string) map[string]string {
+	structure := make(map[string]string)
+	lines := strings.Split(code, "\n")
+
+	switch language {
+	case "pascal":
+		extractPascalStructure(lines, structure)
+	case "javascript", "java", "c++", "csharp":
+		extractCStyleStructure(lines, structure)
+	}
+
+	return structure
+}
+
+// extractPascalStructure extracts structural elements from Pascal/Delphi code
+func extractPascalStructure(lines []string, structure map[string]string) {
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Extract procedure/function declarations
+		if matched, _ := regexp.MatchString(`^(procedure|function)\s+\w+`, trimmed); matched {
+			structure["declaration"] = trimmed
+			structure["declaration_line"] = fmt.Sprintf("%d", i+1)
+		}
+
+		// Extract begin/end blocks
+		if strings.HasPrefix(trimmed, "begin") {
+			structure["begin_line"] = fmt.Sprintf("%d", i+1)
+		}
+		if strings.HasPrefix(trimmed, "end") && (strings.HasSuffix(trimmed, ";") || strings.HasSuffix(trimmed, ".")) {
+			structure["end_line"] = fmt.Sprintf("%d", i+1)
+		}
+
+		// Extract if statements
+		if strings.HasPrefix(trimmed, "if ") {
+			structure["condition"] = trimmed
+		}
+	}
+}
+
+// extractCStyleStructure extracts structural elements from C-style languages
+func extractCStyleStructure(lines []string, structure map[string]string) {
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Extract function declarations
+		if matched, _ := regexp.MatchString(`^\w+\s+\w+\s*\(`, trimmed); matched {
+			structure["declaration"] = trimmed
+			structure["declaration_line"] = fmt.Sprintf("%d", i+1)
+		}
+
+		// Extract if statements
+		if strings.HasPrefix(trimmed, "if ") || strings.HasPrefix(trimmed, "if(") {
+			structure["condition"] = trimmed
+		}
+	}
+}
+
 // findBestMatch attempts to find the best match for a string, considering encoding issues
 func findBestMatch(content, target string) (int, string) {
 	// First try exact match
@@ -561,8 +732,13 @@ func simplifyString(s string) string {
 }
 
 // advancedStringMatch performs advanced string matching with multiple strategies
-func (f *FileOperations) advancedStringMatch(content, target string, options *models.MatchingOptions) (*models.MatchInfo, error) {
+func (f *FileOperations) advancedStringMatch(content, target string, options *models.MatchingOptions, filePath string) (*models.MatchInfo, error) {
 	lines := strings.Split(content, "\n")
+
+	// Auto-detect language if not specified
+	if options.SmartCode && options.CodeLanguage == "" {
+		options.CodeLanguage = detectCodeLanguage(filePath)
+	}
 
 	// Strategy 1: Exact match
 	if matches := f.findExactMatches(content, target, lines); len(matches) > 0 {
@@ -576,23 +752,37 @@ func (f *FileOperations) advancedStringMatch(content, target string, options *mo
 		}
 	}
 
-	// Strategy 3: Auto-chunking for large strings
+	// Strategy 3: Smart code matching (NEW)
+	if options.SmartCode {
+		if matches := f.findSmartCodeMatches(content, target, lines, options); len(matches) > 0 {
+			return &matches[0], nil
+		}
+	}
+
+	// Strategy 4: Auto-chunking for large strings
 	if options.AutoChunk && len(target) > options.MaxChunkSize {
 		if matches := f.findChunkedMatches(content, target, lines, options); len(matches) > 0 {
 			return &matches[0], nil
 		}
 	}
 
-	// Strategy 4: Normalized matching (more tolerant)
+	// Strategy 5: Normalized matching (more tolerant)
 	if options.AutoNormalize {
 		if matches := f.findNormalizedMatches(content, target, lines, options); len(matches) > 0 {
 			return &matches[0], nil
 		}
 	}
 
-	// Strategy 5: Enhanced fuzzy matching
+	// Strategy 6: Enhanced fuzzy matching
 	if options.FuzzyMatch {
 		if matches := f.findEnhancedFuzzyMatches(content, target, lines, options); len(matches) > 0 {
+			return &matches[0], nil
+		}
+	}
+
+	// Strategy 7: Aggressive fuzzy matching (NEW)
+	if options.AggressiveFuzzy {
+		if matches := f.findAggressiveFuzzyMatches(content, target, lines, options); len(matches) > 0 {
 			return &matches[0], nil
 		}
 	}
@@ -894,6 +1084,316 @@ func (f *FileOperations) findOriginalMatch(content, target string, options *mode
 	}
 
 	return strings.TrimSpace(content)
+}
+
+// findSmartCodeMatches finds matches using code structure understanding
+func (f *FileOperations) findSmartCodeMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	// Detect language if not specified
+	language := options.CodeLanguage
+	if language == "" {
+		language = "pascal" // Default for most cases based on user feedback
+	}
+
+	// Normalize both content and target using code-aware normalization
+	normalizedTarget := normalizeCodeBlock(target, language)
+
+	// Try to find matching code blocks by structure
+	blockMatches := f.findCodeBlockMatches(content, target, lines, language)
+	matches = append(matches, blockMatches...)
+
+	// If no structural matches, try line-by-line with code normalization
+	if len(matches) == 0 {
+		for i := 0; i < len(lines); i++ {
+			// Try multi-line blocks starting from this line
+			for blockSize := 1; blockSize <= 20 && i+blockSize <= len(lines); blockSize++ {
+				block := strings.Join(lines[i:i+blockSize], "\n")
+				normalizedBlock := normalizeCodeBlock(block, language)
+
+				similarity := calculateSimilarity(normalizedBlock, normalizedTarget)
+				if similarity >= 0.8 { // High threshold for code matching
+					context := f.getLineContext(lines, i+blockSize/2, 3)
+					matches = append(matches, models.MatchInfo{
+						LineNumber: i + 1,
+						LineText:   lines[i],
+						MatchText:  block,
+						Context:    context,
+					})
+					break
+				}
+			}
+
+			if len(matches) > 0 {
+				break
+			}
+		}
+	}
+
+	return matches
+}
+
+// findCodeBlockMatches finds matches by analyzing code structure
+func (f *FileOperations) findCodeBlockMatches(content, target string, lines []string, language string) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	// Extract structure from target
+	targetStructure := extractCodeStructure(target, language)
+
+	// Look for similar structures in content
+	for i := 0; i < len(lines); i++ {
+		// Try different block sizes
+		for blockSize := 5; blockSize <= 50 && i+blockSize <= len(lines); blockSize++ {
+			block := strings.Join(lines[i:i+blockSize], "\n")
+			blockStructure := extractCodeStructure(block, language)
+
+			// Compare structures
+			if f.structuresMatch(targetStructure, blockStructure, language) {
+				context := f.getLineContext(lines, i+blockSize/2, 3)
+				matches = append(matches, models.MatchInfo{
+					LineNumber: i + 1,
+					LineText:   lines[i],
+					MatchText:  block,
+					Context:    context,
+				})
+				break
+			}
+		}
+
+		if len(matches) > 0 {
+			break
+		}
+	}
+
+	return matches
+}
+
+// structuresMatch compares two code structures for similarity
+func (f *FileOperations) structuresMatch(target, candidate map[string]string, language string) bool {
+	if len(target) == 0 || len(candidate) == 0 {
+		return false
+	}
+
+	matchCount := 0
+	totalElements := 0
+
+	for key, targetValue := range target {
+		totalElements++
+		if candidateValue, exists := candidate[key]; exists {
+			// Language-specific structure comparison
+			switch language {
+			case "pascal":
+				if f.pascalStructureElementsMatch(key, targetValue, candidateValue) {
+					matchCount++
+				}
+			default:
+				// Generic comparison
+				if calculateSimilarity(targetValue, candidateValue) >= 0.7 {
+					matchCount++
+				}
+			}
+		}
+	}
+
+	// Require at least 70% structure match
+	return float64(matchCount)/float64(totalElements) >= 0.7
+}
+
+// pascalStructureElementsMatch compares Pascal/Delphi structural elements
+func (f *FileOperations) pascalStructureElementsMatch(key, target, candidate string) bool {
+	switch key {
+	case "declaration":
+		// Compare procedure/function declarations
+		targetNorm := normalizePascalLine(target)
+		candidateNorm := normalizePascalLine(candidate)
+		return calculateSimilarity(targetNorm, candidateNorm) >= 0.8
+	case "condition":
+		// Compare if conditions
+		targetNorm := normalizePascalLine(target)
+		candidateNorm := normalizePascalLine(candidate)
+		return calculateSimilarity(targetNorm, candidateNorm) >= 0.6
+	default:
+		return calculateSimilarity(target, candidate) >= 0.7
+	}
+}
+
+// findAggressiveFuzzyMatches implements more aggressive fuzzy matching
+func (f *FileOperations) findAggressiveFuzzyMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	// Extract key words from target for aggressive matching
+	targetWords := f.extractKeyWords(target)
+	if len(targetWords) == 0 {
+		return matches
+	}
+
+	threshold := options.SimilarityThreshold
+	if threshold == 0 {
+		threshold = 0.3 // Very low threshold for aggressive matching
+	}
+
+	// Try line-by-line aggressive matching
+	for i, line := range lines {
+		score := f.calculateAggressiveScore(line, targetWords)
+		if score >= threshold {
+			context := f.getLineContext(lines, i, 3)
+			matches = append(matches, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   line,
+				MatchText:  f.extractBestMatch(line, target, options),
+				Context:    context,
+			})
+		}
+	}
+
+	// If no single lines match, try multi-line aggressive matching
+	if len(matches) == 0 {
+		for i := 0; i < len(lines); i++ {
+			for blockSize := 2; blockSize <= 10 && i+blockSize <= len(lines); blockSize++ {
+				block := strings.Join(lines[i:i+blockSize], "\n")
+				score := f.calculateAggressiveScore(block, targetWords)
+
+				if score >= threshold {
+					context := f.getLineContext(lines, i+blockSize/2, 3)
+					matches = append(matches, models.MatchInfo{
+						LineNumber: i + 1,
+						LineText:   lines[i],
+						MatchText:  f.extractBestMatch(block, target, options),
+						Context:    context,
+					})
+					break
+				}
+			}
+			if len(matches) > 0 {
+				break
+			}
+		}
+	}
+
+	return matches
+}
+
+// extractKeyWords extracts important words from a string for aggressive matching
+func (f *FileOperations) extractKeyWords(text string) []string {
+	// Remove common noise words and extract meaningful terms
+	noiseWords := map[string]bool{
+		"the": true, "and": true, "or": true, "but": true, "if": true, "then": true,
+		"else": true, "begin": true, "end": true, "var": true, "const": true,
+		"procedure": true, "function": true,
+	}
+
+	words := regexp.MustCompile(`\w+`).FindAllString(strings.ToLower(text), -1)
+	var keyWords []string
+
+	for _, word := range words {
+		if len(word) >= 3 && !noiseWords[word] {
+			keyWords = append(keyWords, word)
+		}
+	}
+
+	return keyWords
+}
+
+// calculateAggressiveScore calculates a match score based on key words presence
+func (f *FileOperations) calculateAggressiveScore(text string, keyWords []string) float64 {
+	if len(keyWords) == 0 {
+		return 0.0
+	}
+
+	textLower := strings.ToLower(text)
+	matchCount := 0
+
+	for _, word := range keyWords {
+		if strings.Contains(textLower, word) {
+			matchCount++
+		}
+	}
+
+	return float64(matchCount) / float64(len(keyWords))
+}
+
+// generateIntelligentSuggestions creates smart suggestions when no matches are found
+func (f *FileOperations) generateIntelligentSuggestions(content, target string, options *models.MatchingOptions) []string {
+	var suggestions []string
+
+	if !options.SmartSuggestions {
+		return suggestions
+	}
+
+	// Analyze the target to understand what user is looking for
+	targetWords := f.extractKeyWords(target)
+	lines := strings.Split(content, "\n")
+
+	// Find lines that contain some of the key words
+	candidateLines := make(map[int]float64)
+
+	for i, line := range lines {
+		score := f.calculateAggressiveScore(line, targetWords)
+		if score > 0.2 { // Any line with at least 20% word match
+			candidateLines[i] = score
+		}
+	}
+
+	// Sort candidates by score and create suggestions
+	type candidate struct {
+		lineNum int
+		score   float64
+		text    string
+	}
+
+	var candidates []candidate
+	for lineNum, score := range candidateLines {
+		candidates = append(candidates, candidate{
+			lineNum: lineNum,
+			score:   score,
+			text:    strings.TrimSpace(lines[lineNum]),
+		})
+	}
+
+	// Sort by score (highest first)
+	for i := 0; i < len(candidates)-1; i++ {
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[j].score > candidates[i].score {
+				candidates[i], candidates[j] = candidates[j], candidates[i]
+			}
+		}
+	}
+
+	// Generate suggestions from top candidates
+	maxSuggestions := 5
+	for i, cand := range candidates {
+		if i >= maxSuggestions {
+			break
+		}
+
+		suggestion := fmt.Sprintf("Line %d (%.0f%% match): %s",
+			cand.lineNum+1,
+			cand.score*100,
+			cand.text)
+
+		suggestions = append(suggestions, suggestion)
+	}
+
+	// Add recommendations for better matching
+	if len(suggestions) > 0 {
+		suggestions = append(suggestions, "")
+		suggestions = append(suggestions, "💡 Recommendations to improve matching:")
+
+		if !options.SmartCode {
+			suggestions = append(suggestions, "  • Try --smart-code for better code structure understanding")
+		}
+		if !options.AggressiveFuzzy {
+			suggestions = append(suggestions, "  • Try --aggressive-fuzzy for more tolerant matching")
+		}
+		if !options.AutoNormalize {
+			suggestions = append(suggestions, "  • Try --auto-normalize for whitespace tolerance")
+		}
+		if options.SimilarityThreshold > 0.5 {
+			suggestions = append(suggestions, "  • Try lowering --similarity threshold (e.g., 0.4)")
+		}
+	}
+
+	return suggestions
 }
 
 // normalizeForMatching normalizes strings for fuzzy matching
@@ -1199,9 +1699,11 @@ func (f *FileOperations) replaceSingleMatch(content string, match *models.MatchI
 }
 
 // handleNoMatchesFound handles the case when no matches are found
-func (f *FileOperations) handleNoMatchesFound(content, target string) (*models.EditResult, error) {
+func (f *FileOperations) handleNoMatchesFound(content, target string, options *models.MatchingOptions) (*models.EditResult, error) {
 	matches := findStringMatches(content, target)
 	errorMsg := fmt.Sprintf("String '%s' not found in file", target)
+
+	// Add basic similar matches
 	if len(matches) > 0 {
 		errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
 	}
@@ -1209,6 +1711,14 @@ func (f *FileOperations) handleNoMatchesFound(content, target string) (*models.E
 	// Try fuzzy matching for suggestions
 	if lineIndex, matchedLine := findBestMatch(content, target); lineIndex != -1 {
 		errorMsg += fmt.Sprintf("\nBest fuzzy match found at line %d: %q", lineIndex+1, matchedLine)
+	}
+
+	// Generate intelligent suggestions if enabled
+	if options != nil {
+		suggestions := f.generateIntelligentSuggestions(content, target, options)
+		if len(suggestions) > 0 {
+			errorMsg += "\n\n🧠 Intelligent Suggestions:\n" + strings.Join(suggestions, "\n")
+		}
 	}
 
 	return &models.EditResult{

@@ -52,6 +52,10 @@ type MatchingOptions struct {
 	SimilarityThreshold float64 // Threshold for fuzzy matching (0.0-1.0)
 	AutoChunk        bool  // Automatically break large strings into smaller chunks
 	MaxChunkSize     int   // Maximum size for chunks when AutoChunk is enabled
+	SmartCode        bool  // Enable smart code understanding for better block matching
+	AggressiveFuzzy  bool  // Enable more aggressive fuzzy matching for irregular formatting
+	SmartSuggestions bool  // Enable intelligent suggestions when exact match fails
+	CodeLanguage     string // Programming language hint (auto-detected if empty)
 }
 
 // CopyOperation represents a file copy operation

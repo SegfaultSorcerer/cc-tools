@@ -62,6 +62,10 @@ var (
 	editSimilarityThreshold float64
 	editAutoChunk       bool
 	editMaxChunkSize    int
+	editSmartCode       bool
+	editAggressiveFuzzy bool
+	editSmartSuggestions bool
+	editCodeLanguage   string
 )
 
 func init() {
@@ -80,6 +84,10 @@ func init() {
 	editCmd.Flags().Float64Var(&editSimilarityThreshold, "similarity", 0.7, "Similarity threshold for fuzzy matching (0.0-1.0)")
 	editCmd.Flags().BoolVar(&editAutoChunk, "auto-chunk", false, "Automatically break large strings into smaller chunks")
 	editCmd.Flags().IntVar(&editMaxChunkSize, "max-chunk-size", 500, "Maximum size for chunks when auto-chunk is enabled")
+	editCmd.Flags().BoolVar(&editSmartCode, "smart-code", false, "Enable smart code understanding for better block matching")
+	editCmd.Flags().BoolVar(&editAggressiveFuzzy, "aggressive-fuzzy", false, "Enable more aggressive fuzzy matching for irregular formatting")
+	editCmd.Flags().BoolVar(&editSmartSuggestions, "smart-suggestions", false, "Enable intelligent suggestions when exact match fails")
+	editCmd.Flags().StringVar(&editCodeLanguage, "code-language", "", "Programming language hint (auto-detected from file extension)")
 
 	editCmd.MarkFlagRequired("file")
 	editCmd.MarkFlagRequired("old")
@@ -106,6 +114,10 @@ func runEditCmd(cmd *cobra.Command, args []string) error {
 		SimilarityThreshold: editSimilarityThreshold,
 		AutoChunk:           editAutoChunk,
 		MaxChunkSize:        editMaxChunkSize,
+		SmartCode:           editSmartCode,
+		AggressiveFuzzy:     editAggressiveFuzzy,
+		SmartSuggestions:    editSmartSuggestions,
+		CodeLanguage:        editCodeLanguage,
 	}
 
 	// Perform the edit with advanced options
