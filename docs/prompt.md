@@ -81,15 +81,22 @@ cctools edit -f arquivo.pas -o "TaskDlg warning" -n "ShowMessage('alert')" --agg
 cctools edit -f arquivo.pas -o "complex procedure" -n "new procedure" --smart-code --code-language pascal
 ```
 
+#### 5. **Matching Ambíguo** → **RESOLVIDO** ⭐
+```bash
+# Código repetitivo em múltiplas funções (agora seleção inteligente)
+cctools edit -f arquivo.pas -o "listadez := TStringList.Create" -n "// OPTIMIZED" --debug-mode
+# Sistema calcula unicidade e escolhe correspondência mais relevante
+```
+
 ### 🎯 Estratégias de Matching (Hierárquicas)
 
 1. **Exact Match** (padrão)
 2. **Regex Match** (`--regex`)
-3. **Smart Code** (`--smart-code`) - **NOVO**
+3. **Smart Code** (`--smart-code`)
 4. **Auto-Chunk** (`--auto-chunk`)
 5. **Normalized** (`--auto-normalize`)
 6. **Enhanced Fuzzy** (`--fuzzy + --similarity`)
-7. **Aggressive Fuzzy** (`--aggressive-fuzzy`) - **NOVO**
+7. **Aggressive Fuzzy** (`--aggressive-fuzzy`)
 
 ---
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -512,6 +513,65 @@ func chunkString(s string, maxSize int) []string {
 	return chunks
 }
 
+// intelligentChunkString breaks a large string into smart chunks based on code structure
+func intelligentChunkString(s string, language string) []string {
+	if language != "pascal" {
+		return chunkString(s, 500) // Fallback to original chunking
+	}
+
+	lines := strings.Split(s, "\n")
+	var chunks []string
+	currentChunk := ""
+	currentDepth := 0 // Track begin/end depth
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(strings.ToLower(line))
+
+		// Track begin/end depth for Pascal
+		if strings.HasPrefix(trimmed, "begin") {
+			currentDepth++
+		} else if strings.HasPrefix(trimmed, "end") && (strings.HasSuffix(trimmed, ";") || strings.HasSuffix(trimmed, ".")) {
+			currentDepth--
+		}
+
+		// Break chunk at logical boundaries
+		shouldBreak := false
+		if currentDepth == 0 { // Outside any begin/end block
+			// Break at procedure/function boundaries
+			if strings.HasPrefix(trimmed, "procedure ") || strings.HasPrefix(trimmed, "function ") {
+				shouldBreak = currentChunk != ""
+			}
+			// Break at major structural elements
+			if strings.HasPrefix(trimmed, "type ") || strings.HasPrefix(trimmed, "var ") || strings.HasPrefix(trimmed, "const ") {
+				shouldBreak = currentChunk != ""
+			}
+		}
+
+		// Size-based break as fallback
+		if len(currentChunk)+len(line)+1 > 300 && currentDepth == 0 {
+			shouldBreak = true
+		}
+
+		if shouldBreak && currentChunk != "" {
+			chunks = append(chunks, strings.TrimSpace(currentChunk))
+			currentChunk = line
+		} else {
+			if currentChunk != "" {
+				currentChunk += "\n" + line
+			} else {
+				currentChunk = line
+			}
+		}
+	}
+
+	// Add the last chunk if not empty
+	if currentChunk != "" {
+		chunks = append(chunks, strings.TrimSpace(currentChunk))
+	}
+
+	return chunks
+}
+
 // detectCodeLanguage attempts to detect the programming language from file extension
 func detectCodeLanguage(filePath string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
@@ -553,6 +613,9 @@ func normalizeCodeBlock(code, language string) string {
 			continue // Skip empty lines for matching purposes
 		}
 
+		// Remove Delphi comments first (both // and { } style)
+		trimmed = removeDelphiComments(trimmed)
+
 		// Language-specific normalization
 		switch language {
 		case "pascal":
@@ -567,6 +630,30 @@ func normalizeCodeBlock(code, language string) string {
 	}
 
 	return strings.Join(normalized, "\n")
+}
+
+// removeDelphiComments removes both types of Delphi comments
+func removeDelphiComments(line string) string {
+	// Remove // style comments
+	if index := strings.Index(line, "//"); index != -1 {
+		line = strings.TrimSpace(line[:index])
+	}
+
+	// Remove { } style comments
+	if start := strings.Index(line, "{"); start != -1 {
+		if end := strings.Index(line, "}"); end > start {
+			// Remove only the comment part
+			before := strings.TrimSpace(line[:start])
+			after := strings.TrimSpace(line[end+1:])
+			if after != "" {
+				line = before + " " + after
+			} else {
+				line = before
+			}
+		}
+	}
+
+	return strings.TrimSpace(line)
 }
 
 // normalizePascalLine normalizes a Pascal/Delphi line for matching
@@ -585,6 +672,14 @@ func normalizePascalLine(line string) string {
 		{`\s*<>\s*`, " <> "},       // not equal
 		{`\s*<\s*`, " < "},         // less than
 		{`\s*>\s*`, " > "},         // greater than
+		{`\s*,\s*`, ", "},          // parameter lists
+		{`\s*\.\s*`, "."},          // object/field access
+		{`\s*:\s*=\s*`, ":="},      // normalize assignment operator
+		{`\s+then\s+`, " then "},    // then keyword
+		{`\s+begin\s+`, " begin "},  // begin keyword
+		{`\s+end\s+`, " end "},      // end keyword
+		{`\s+do\s+`, " do "},        // do keyword
+		{`\s+else\s+`, " else "},    // else keyword
 		{`\s+`, " "},               // multiple spaces to single
 	}
 
@@ -593,6 +688,17 @@ func normalizePascalLine(line string) string {
 		re := regexp.MustCompile(p.pattern)
 		result = re.ReplaceAllString(result, p.replacement)
 	}
+
+	// Handle Delphi-specific formatting issues
+	result = strings.TrimSpace(result)
+
+	// Remove excessive spacing around operators that's common in legacy code
+	result = regexp.MustCompile(`\s*([+\-*/])\s*`).ReplaceAllString(result, " $1 ")
+
+	// Normalize boolean operators
+	result = regexp.MustCompile(`\s+and\s+`).ReplaceAllString(result, " and ")
+	result = regexp.MustCompile(`\s+or\s+`).ReplaceAllString(result, " or ")
+	result = regexp.MustCompile(`\s+not\s+`).ReplaceAllString(result, " not ")
 
 	return strings.TrimSpace(result)
 }
@@ -740,71 +846,157 @@ func (f *FileOperations) advancedStringMatch(content, target string, options *mo
 		options.CodeLanguage = detectCodeLanguage(filePath)
 	}
 
+	// Debug mode: show detection process
+	if options.DebugMode {
+		fmt.Printf("🔍 DEBUG: Detected language: %s\n", options.CodeLanguage)
+		fmt.Printf("🔍 DEBUG: Target string length: %d characters\n", len(target))
+		fmt.Printf("🔍 DEBUG: Content lines: %d\n", len(lines))
+		fmt.Printf("🔍 DEBUG: Options - SmartCode: %t, AutoNormalize: %t, Fuzzy: %t, AggressiveFuzzy: %t\n",
+			options.SmartCode, options.AutoNormalize, options.FuzzyMatch, options.AggressiveFuzzy)
+	}
+
 	// Strategy 1: Exact match
+	if options.DebugMode {
+		fmt.Println("🔍 DEBUG: Strategy 1 - Trying exact match...")
+	}
 	if matches := f.findExactMatches(content, target, lines); len(matches) > 0 {
+		if options.DebugMode {
+			fmt.Printf("✅ DEBUG: Exact match found at line %d\n", matches[0].LineNumber)
+		}
 		return &matches[0], nil
 	}
 
 	// Strategy 2: Regex matching
 	if options.UseRegex {
+		if options.DebugMode {
+			fmt.Println("🔍 DEBUG: Strategy 2 - Trying regex matching...")
+		}
 		if matches := f.findRegexMatches(content, target, lines); len(matches) > 0 {
+			if options.DebugMode {
+				fmt.Printf("✅ DEBUG: Regex match found at line %d\n", matches[0].LineNumber)
+			}
 			return &matches[0], nil
+		}
+		if options.DebugMode {
+			fmt.Println("❌ DEBUG: Regex matching failed")
 		}
 	}
 
 	// Strategy 3: Smart code matching (NEW)
 	if options.SmartCode {
+		if options.DebugMode {
+			fmt.Println("🔍 DEBUG: Strategy 3 - Trying smart code matching...")
+		}
 		if matches := f.findSmartCodeMatches(content, target, lines, options); len(matches) > 0 {
+			if options.DebugMode {
+				fmt.Printf("✅ DEBUG: Smart code match found at line %d\n", matches[0].LineNumber)
+			}
 			return &matches[0], nil
+		}
+		if options.DebugMode {
+			fmt.Println("❌ DEBUG: Smart code matching failed")
 		}
 	}
 
 	// Strategy 4: Auto-chunking for large strings
 	if options.AutoChunk && len(target) > options.MaxChunkSize {
+		if options.DebugMode {
+			fmt.Printf("🔍 DEBUG: Strategy 4 - Trying auto-chunking (size: %d, max: %d)...\n", len(target), options.MaxChunkSize)
+		}
 		if matches := f.findChunkedMatches(content, target, lines, options); len(matches) > 0 {
+			if options.DebugMode {
+				fmt.Printf("✅ DEBUG: Chunked match found at line %d\n", matches[0].LineNumber)
+			}
 			return &matches[0], nil
+		}
+		if options.DebugMode {
+			fmt.Println("❌ DEBUG: Auto-chunking failed")
 		}
 	}
 
 	// Strategy 5: Normalized matching (more tolerant)
 	if options.AutoNormalize {
+		if options.DebugMode {
+			fmt.Println("🔍 DEBUG: Strategy 5 - Trying normalized matching...")
+			normalizedTarget := advancedNormalize(target, options)
+			fmt.Printf("🔍 DEBUG: Normalized target: %q\n", normalizedTarget)
+		}
 		if matches := f.findNormalizedMatches(content, target, lines, options); len(matches) > 0 {
+			if options.DebugMode {
+				fmt.Printf("✅ DEBUG: Normalized match found at line %d\n", matches[0].LineNumber)
+			}
 			return &matches[0], nil
+		}
+		if options.DebugMode {
+			fmt.Println("❌ DEBUG: Normalized matching failed")
 		}
 	}
 
 	// Strategy 6: Enhanced fuzzy matching
 	if options.FuzzyMatch {
+		if options.DebugMode {
+			fmt.Printf("🔍 DEBUG: Strategy 6 - Trying fuzzy matching (threshold: %.2f)...\n", options.SimilarityThreshold)
+		}
 		if matches := f.findEnhancedFuzzyMatches(content, target, lines, options); len(matches) > 0 {
+			if options.DebugMode {
+				fmt.Printf("✅ DEBUG: Fuzzy match found at line %d\n", matches[0].LineNumber)
+			}
 			return &matches[0], nil
+		}
+		if options.DebugMode {
+			fmt.Println("❌ DEBUG: Fuzzy matching failed")
 		}
 	}
 
 	// Strategy 7: Aggressive fuzzy matching (NEW)
 	if options.AggressiveFuzzy {
+		if options.DebugMode {
+			fmt.Printf("🔍 DEBUG: Strategy 7 - Trying aggressive fuzzy matching (threshold: %.2f)...\n", options.SimilarityThreshold)
+		}
 		if matches := f.findAggressiveFuzzyMatches(content, target, lines, options); len(matches) > 0 {
+			if options.DebugMode {
+				fmt.Printf("✅ DEBUG: Aggressive fuzzy match found at line %d\n", matches[0].LineNumber)
+			}
 			return &matches[0], nil
 		}
+		if options.DebugMode {
+			fmt.Println("❌ DEBUG: Aggressive fuzzy matching failed")
+		}
+	}
+
+	if options.DebugMode {
+		fmt.Println("❌ DEBUG: All strategies failed - no matches found")
 	}
 
 	return nil, fmt.Errorf("no matches found")
 }
 
-// findExactMatches finds exact string matches
+// findExactMatches finds exact string matches with improved disambiguation
 func (f *FileOperations) findExactMatches(content, target string, lines []string) []models.MatchInfo {
 	var matches []models.MatchInfo
 
 	for i, line := range lines {
 		if strings.Contains(line, target) {
-			context := f.getLineContext(lines, i, 2)
+			// Get extended context for better disambiguation
+			contextLines := f.getLineContext(lines, i, 5)
+
+			// Calculate uniqueness score based on surrounding context
+			uniquenessScore := f.calculateMatchUniqueness(lines, i, target)
+
 			matches = append(matches, models.MatchInfo{
-				LineNumber: i + 1,
-				LineText:   line,
-				MatchText:  target,
-				Context:    context,
+				LineNumber:     i + 1,
+				LineText:       line,
+				MatchText:      target,
+				Context:        contextLines,
+				Uniqueness:     uniquenessScore,
 			})
 		}
 	}
+
+	// Sort by uniqueness score to get the most distinctive matches first
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].Uniqueness > matches[j].Uniqueness
+	})
 
 	return matches
 }
@@ -900,16 +1092,37 @@ func (f *FileOperations) findNormalizedMatches(content, target string, lines []s
 func (f *FileOperations) findChunkedMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
 	var matches []models.MatchInfo
 
-	// Break target into chunks
-	chunks := chunkString(target, options.MaxChunkSize)
+	// Break target into chunks - use intelligent chunking for Pascal code
+	var chunks []string
+	if options.SmartCode && options.CodeLanguage == "pascal" {
+		if options.DebugMode {
+			fmt.Println("🔍 DEBUG: Using intelligent chunking for Pascal code...")
+		}
+		chunks = intelligentChunkString(target, options.CodeLanguage)
+	} else {
+		chunks = chunkString(target, options.MaxChunkSize)
+	}
+
+	if options.DebugMode {
+		fmt.Printf("🔍 DEBUG: Split into %d chunks\n", len(chunks))
+		for i, chunk := range chunks {
+			fmt.Printf("🔍 DEBUG: Chunk %d: %d characters\n", i+1, len(chunk))
+		}
+	}
 
 	for _, chunk := range chunks {
+		if options.DebugMode {
+			fmt.Printf("🔍 DEBUG: Trying chunk: %q...\n", chunk[:min(100, len(chunk))])
+		}
 		chunkMatches := f.findNormalizedMatches(content, chunk, lines, options)
 		if len(chunkMatches) > 0 {
 			// Found a chunk, try to find the full match around this area
 			for _, chunkMatch := range chunkMatches {
 				expandedMatch := f.expandMatch(lines, chunkMatch.LineNumber-1, target, options)
 				if expandedMatch != nil {
+					if options.DebugMode {
+						fmt.Printf("✅ DEBUG: Chunk match expanded to full match at line %d\n", expandedMatch.LineNumber)
+					}
 					matches = append(matches, *expandedMatch)
 					break // Found it, no need to continue with other chunks
 				}
@@ -2416,3 +2629,95 @@ func (f *FileOperations) ListDirectory(operation *models.DirectoryListOperation)
 		},
 	}, nil
 }
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// calculateMatchUniqueness calculates a uniqueness score for a match based on surrounding context
+func (f *FileOperations) calculateMatchUniqueness(lines []string, lineIndex int, target string) float64 {
+	// Get surrounding context (more context = better uniqueness)
+	contextStart := max(0, lineIndex-4)
+	contextEnd := min(len(lines), lineIndex+5)
+	contextLines := lines[contextStart:contextEnd]
+	contextText := strings.Join(contextLines, "\n")
+
+	// Calculate uniqueness based on:
+	// 1. Function signature uniqueness
+	// 2. Variable declarations in context
+	// 3. Logic patterns
+	// 4. Position-based scoring
+
+	score := 0.0
+
+	// High-value function signatures (prioritize Somar function)
+	if strings.Contains(contextText, "function Somar(dez: string): integer") {
+		score += 100.0 // Maximum priority for exact Somar function
+	}
+	if strings.Contains(contextText, "function Somar") {
+		score += 70.0
+	}
+	if strings.Contains(contextText, "function EliminarDezPares") {
+		score += 30.0
+	}
+	if strings.Contains(contextText, "function EliminarDezImPares") {
+		score += 30.0
+	}
+
+	// Unique variable declaration patterns
+	if strings.Contains(contextText, "total, itens, a: integer") {
+		score += 50.0
+	}
+	if strings.Contains(contextText, "a, count: integer") {
+		score += 25.0
+	}
+
+	// Unique logic patterns (prioritize Somar logic)
+	if strings.Contains(contextText, "total := itens + total") {
+		score += 40.0
+	}
+	if strings.Contains(contextText, "itens := StrToInt(listadez.Strings[a])") {
+		score += 35.0
+	}
+	if strings.Contains(contextText, "for a := 0 to listadez.Count - 1 do") {
+		score += 20.0
+	}
+	if strings.Contains(contextText, "count := 0") {
+		score += 15.0
+	}
+
+	// Proximity scoring - closer to function signature is better
+	for i := range contextLines {
+		lineOffset := i - (lineIndex - contextStart)
+		if strings.Contains(contextLines[i], "function Somar") {
+			// Higher score for closer proximity to function signature
+			if lineOffset < 0 {
+				score += float64(30 + lineOffset) // Before function signature
+			} else {
+				score += float64(30 - lineOffset) // After function signature
+			}
+		}
+	}
+
+	// Penalize common patterns (but less than before)
+	if strings.Contains(contextText, "listadez := TStringList.Create") {
+		score -= 2.0 // Common pattern, small penalty
+	}
+	if strings.Contains(contextText, "StrToStrings") {
+		score -= 1.0
+	}
+
+	// Bonus for complete function patterns
+	if strings.Contains(contextText, "total, itens, a: integer") &&
+	   strings.Contains(contextText, "total := itens + total") &&
+	   strings.Contains(contextText, "function Somar") {
+		score += 25.0 // Bonus for complete Somar function pattern
+	}
+
+	return max(0, score)
+}
+

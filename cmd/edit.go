@@ -66,6 +66,7 @@ var (
 	editAggressiveFuzzy bool
 	editSmartSuggestions bool
 	editCodeLanguage   string
+	editDebugMode      bool
 )
 
 func init() {
@@ -88,6 +89,7 @@ func init() {
 	editCmd.Flags().BoolVar(&editAggressiveFuzzy, "aggressive-fuzzy", false, "Enable more aggressive fuzzy matching for irregular formatting")
 	editCmd.Flags().BoolVar(&editSmartSuggestions, "smart-suggestions", false, "Enable intelligent suggestions when exact match fails")
 	editCmd.Flags().StringVar(&editCodeLanguage, "code-language", "", "Programming language hint (auto-detected from file extension)")
+	editCmd.Flags().BoolVar(&editDebugMode, "debug-mode", false, "Enable debug mode to see detailed matching process")
 
 	editCmd.MarkFlagRequired("file")
 	editCmd.MarkFlagRequired("old")
@@ -118,6 +120,7 @@ func runEditCmd(cmd *cobra.Command, args []string) error {
 		AggressiveFuzzy:     editAggressiveFuzzy,
 		SmartSuggestions:    editSmartSuggestions,
 		CodeLanguage:        editCodeLanguage,
+		DebugMode:           editDebugMode,
 	}
 
 	// Perform the edit with advanced options

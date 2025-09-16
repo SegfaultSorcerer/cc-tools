@@ -40,6 +40,7 @@ type MatchInfo struct {
 	LineText   string
 	MatchText  string
 	Context    []string // Surrounding lines for context
+	Uniqueness float64 // Uniqueness score for disambiguation
 }
 
 // MatchingOptions represents options for string matching
@@ -56,6 +57,7 @@ type MatchingOptions struct {
 	AggressiveFuzzy  bool  // Enable more aggressive fuzzy matching for irregular formatting
 	SmartSuggestions bool  // Enable intelligent suggestions when exact match fails
 	CodeLanguage     string // Programming language hint (auto-detected if empty)
+	DebugMode        bool  // Enable debug mode for troubleshooting matching issues
 }
 
 // CopyOperation represents a file copy operation
