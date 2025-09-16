@@ -5,12 +5,16 @@ type EditOperation struct {
 	OldString  string `json:"old_string"`
 	NewString  string `json:"new_string"`
 	ReplaceAll bool   `json:"replace_all,omitempty"`
+	UseRegex   bool   `json:"use_regex,omitempty"`
+	FuzzyMatch bool   `json:"fuzzy_match,omitempty"`
 }
 
 // MultiEditRequest represents multiple edit operations on a single file
 type MultiEditRequest struct {
-	FilePath string          `json:"file_path"`
-	Edits    []EditOperation `json:"edits"`
+	FilePath        string          `json:"file_path"`
+	Edits           []EditOperation `json:"edits"`
+	ContinueOnError bool            `json:"continue_on_error,omitempty"`
+	DryRun          bool            `json:"dry_run,omitempty"`
 }
 
 // FileInfo holds information about a file including its encoding
@@ -22,9 +26,28 @@ type FileInfo struct {
 
 // EditResult represents the result of an edit operation
 type EditResult struct {
-	Success bool
-	Message string
-	Error   error
+	Success       bool
+	Message       string
+	Error         error
+	PreviewDiff   string // Diff preview of changes
+	MatchedLines  []MatchInfo // Information about matched lines
+	PartialErrors []string // Errors for individual operations in multiedit
+}
+
+// MatchInfo represents information about a matched string
+type MatchInfo struct {
+	LineNumber int
+	LineText   string
+	MatchText  string
+	Context    []string // Surrounding lines for context
+}
+
+// MatchingOptions represents options for string matching
+type MatchingOptions struct {
+	UseRegex         bool
+	FuzzyMatch       bool
+	IgnoreWhitespace bool
+	CaseInsensitive  bool
 }
 
 // CopyOperation represents a file copy operation

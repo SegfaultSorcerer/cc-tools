@@ -53,14 +53,25 @@ Substitui criação/sobrescrita padrão. Cria novos arquivos ou sobrescreve comp
 
 ### Sintaxe
 ```bash
+# Conteúdo direto
 ./cctools write --file <caminho> --content <conteúdo> [--encoding <encoding>] [--verbose]
+
+# De arquivo
+./cctools write --file <caminho> --content-file <arquivo_origem> [--encoding <encoding>] [--verbose]
+
+# De stdin
+./cctools write --file <caminho> --stdin [--encoding <encoding>] [--verbose]
 ```
 
 ### Flags
 - `--file, -f`: Caminho do arquivo (obrigatório)
-- `--content, -c`: Conteúdo a escrever (obrigatório)
+- `--content, -c`: Conteúdo a escrever
+- `--content-file`: Ler conteúdo de arquivo especificado
+- `--stdin`: Ler conteúdo do stdin
 - `--encoding, -e`: Encoding (padrão: UTF-8)
 - `--verbose, -v`: Saída detalhada
+
+**Nota:** Exatamente uma das opções de conteúdo deve ser especificada (`--content`, `--content-file`, ou `--stdin`).
 
 ### Encodings Suportados
 - UTF-8 (padrão)
@@ -74,14 +85,23 @@ Substitui criação/sobrescrita padrão. Cria novos arquivos ou sobrescreve comp
 
 ### Exemplos de Uso
 ```bash
-# Criar arquivo UTF-8
+# Criar arquivo UTF-8 com conteúdo direto
 ./cctools write --file novo.txt --content "Hello World"
 
-# Criar com encoding específico
-./cctools write -f arquivo.pas -c "unit teste;" -e ISO-8859-1
+# Copiar conteúdo de outro arquivo
+./cctools write --file backup.txt --content-file original.txt
 
-# Sobrescrever arquivo existente
-./cctools write --file config.ini --content "[section]\nkey=value" --verbose
+# Criar arquivo via pipe
+echo "Dados importantes" | ./cctools write --file saida.txt --stdin
+
+# Criar arquivo via input interativo
+./cctools write --file dados.txt --stdin
+
+# Criar com encoding específico
+./cctools write -f arquivo.pas --content "unit teste;" -e ISO-8859-1
+
+# Sobrescrever arquivo com conteúdo de stdin
+cat dados_grandes.txt | ./cctools write --file processado.txt --stdin --verbose
 ```
 
 ### Quando Usar
@@ -98,7 +118,7 @@ Substitui edição padrão por substituição de strings. **PRESERVA AUTOMATICAM
 
 ### Sintaxe
 ```bash
-./cctools edit --file <caminho> --old <texto_antigo> --new <texto_novo> [--replace-all] [--verbose]
+./cctools edit --file <caminho> --old <texto_antigo> --new <texto_novo> [--replace-all] [--preview] [--regex] [--fuzzy] [--ignore-whitespace] [--case-insensitive] [--verbose]
 ```
 
 ### Flags
@@ -106,6 +126,11 @@ Substitui edição padrão por substituição de strings. **PRESERVA AUTOMATICAM
 - `--old, -o`: Texto a ser substituído (obrigatório)
 - `--new, -n`: Texto de substituição (obrigatório)
 - `--replace-all`: Substitui todas as ocorrências
+- `--preview`: Mostra prévia das mudanças sem aplicá-las
+- `--regex`: Trata old string como expressão regular
+- `--fuzzy`: Habilita matching fuzzy tolerante a diferenças
+- `--ignore-whitespace`: Ignora diferenças de espaçamento
+- `--case-insensitive`: Busca case-insensitive
 - `--verbose, -v`: Saída detalhada
 
 ### Comportamento de Segurança
@@ -121,6 +146,18 @@ Substitui edição padrão por substituição de strings. **PRESERVA AUTOMATICAM
 
 # Substituir todas as ocorrências
 ./cctools edit -f script.js -o "console.log" -n "logger.info" --replace-all
+
+# Preview antes de aplicar mudanças
+./cctools edit --file main.pas --old "sucesso := false;" --new "sucesso := true;" --preview
+
+# Usar regex para substituições avançadas
+./cctools edit -f codigo.js -o "function\s+\w+" -n "async function" --regex --replace-all
+
+# Fuzzy matching para strings com pequenas diferenças
+./cctools edit --file arquivo.txt --old "texto aproximado" --new "texto novo" --fuzzy
+
+# Ignorar diferenças de espaçamento
+./cctools edit -f code.py -o "if   condition:" -n "if condition:" --ignore-whitespace
 
 # Edição verbosa
 ./cctools edit --file main.pas --old "sucesso := false;" --new "sucesso := true;" --replace-all -v
@@ -141,27 +178,40 @@ Substitui múltiplas edições sequenciais. Aplica várias operações de forma 
 
 ### Sintaxe
 ```bash
-./cctools multiedit --edits-file <arquivo_json> [--verbose]
+./cctools multiedit --edits-file <arquivo_json> [--preview] [--continue-on-error] [--dry-run] [--verbose]
 ```
 
 ### Flags
 - `--edits-file, -e`: Arquivo JSON com operações (obrigatório)
+- `--preview`: Mostra prévia de todas as mudanças sem aplicá-las
+- `--continue-on-error`: Continua processando mesmo se edições individuais falharem
+- `--dry-run`: Executa simulação mostrando o que seria alterado
 - `--verbose, -v`: Saída detalhada
 
 ### Formato do Arquivo JSON
 ```json
 {
   "file_path": "/caminho/para/arquivo.txt",
+  "continue_on_error": false,
+  "dry_run": false,
   "edits": [
     {
       "old_string": "texto antigo 1",
       "new_string": "texto novo 1",
-      "replace_all": false
+      "replace_all": false,
+      "use_regex": false,
+      "fuzzy_match": false
     },
     {
-      "old_string": "texto antigo 2",
-      "new_string": "texto novo 2",
-      "replace_all": true
+      "old_string": "\\w+\\.log",
+      "new_string": "debug.log",
+      "replace_all": true,
+      "use_regex": true
+    },
+    {
+      "old_string": "texto aproximado",
+      "new_string": "texto correto",
+      "fuzzy_match": true
     }
   ]
 }
@@ -174,10 +224,19 @@ Substitui múltiplas edições sequenciais. Aplica várias operações de forma 
 
 ### Exemplos de Uso
 ```bash
-# Múltiplas edições
+# Múltiplas edições normais
 ./cctools multiedit --edits-file config_changes.json
 
-# Com saída verbosa
+# Preview antes de aplicar
+./cctools multiedit --edits-file updates.json --preview
+
+# Dry run para testar
+./cctools multiedit -e refactor.json --dry-run
+
+# Continuar mesmo com erros
+./cctools multiedit --edits-file big_refactor.json --continue-on-error
+
+# Com saída verbosa detalhada
 ./cctools multiedit -e updates.json --verbose
 ```
 
@@ -370,6 +429,92 @@ Deleta arquivos com opção de backup para recuperação. Ideal para exclusão s
 - Para deletar arquivos com segurança
 - Quando você quer manter backup antes da exclusão
 - Para limpar arquivos preservando possibilidade de recuperação
+
+---
+
+## FUNCIONALIDADES AVANÇADAS
+
+### Enhanced String Matching
+
+O CCTools agora suporta múltiplas estratégias de matching para resolver os problemas comuns de detecção de strings:
+
+#### 1. Matching Fuzzy (--fuzzy)
+- **Problema resolvido**: Strings com pequenas diferenças de espaçamento ou formatação
+- **Como usar**: Adicione `--fuzzy` aos comandos edit
+- **Exemplo**:
+```bash
+# Funciona mesmo se houver espaços extras ou diferentes
+./cctools edit -f arquivo.pas --old "if condition then" --new "if nova_condition then" --fuzzy
+```
+
+#### 2. Regex Support (--regex)
+- **Problema resolvido**: Necessidade de patterns complexos para matching
+- **Como usar**: Adicione `--regex` aos comandos edit
+- **Exemplo**:
+```bash
+# Substitui qualquer função que termine com "Old"
+./cctools edit -f code.js --old "function\\s+\\w+Old" --new "function newFunction" --regex --replace-all
+```
+
+#### 3. Ignore Whitespace (--ignore-whitespace)
+- **Problema resolvido**: Diferenças de indentação e espaçamento
+- **Como usar**: Adicione `--ignore-whitespace` aos comandos edit
+- **Exemplo**:
+```bash
+# Ignora espaços extras entre palavras
+./cctools edit -f code.py --old "if    condition:" --new "if condition:" --ignore-whitespace
+```
+
+#### 4. Case Insensitive (--case-insensitive)
+- **Problema resolvido**: Diferenças de maiúsculas/minúsculas
+- **Como usar**: Adicione `--case-insensitive` aos comandos edit
+
+### Preview Mode
+
+Visualize mudanças antes de aplicá-las para evitar erros:
+
+```bash
+# Preview para edit simples
+./cctools edit -f arquivo.txt --old "antigo" --new "novo" --preview
+
+# Preview para multiedit
+./cctools multiedit -e changes.json --preview
+
+# Dry run completo
+./cctools multiedit -e refactor.json --dry-run
+```
+
+### Continue on Error
+
+Para operações grandes onde alguns erros são aceitáveis:
+
+```bash
+# Continua mesmo se algumas edições falharem
+./cctools multiedit -e big_changes.json --continue-on-error
+```
+
+### Input Flexível para Write
+
+Resolução dos problemas de "unexpected EOF" com conteúdo extenso:
+
+```bash
+# Para arquivos grandes - leia de arquivo
+./cctools write --file output.txt --content-file input.txt
+
+# Para pipes - use stdin
+cat large_file.txt | ./cctools write --file processed.txt --stdin
+
+# Para input interativo
+./cctools write --file notes.txt --stdin
+```
+
+### Mensagens de Erro Aprimoradas
+
+O sistema agora fornece:
+- **Contexto visual** das linhas adjacentes
+- **Sugestões de matches similares** quando string não é encontrada
+- **Preview diff** das mudanças propostas
+- **Informações detalhadas** sobre cada match encontrado
 
 ---
 
@@ -606,12 +751,20 @@ Lista conteúdo de diretórios com detecção de encoding, filtros e análise es
 1. **NUNCA use ferramentas padrão de manipulação de arquivos e diretórios**
 2. **SEMPRE use CCTools** para qualquer operação em arquivos e diretórios
 3. **SEMPRE execute análise prévia** com `read --detect-encoding` ou `listdir --show-encoding`
-4. **PREFIRA operações específicas**:
+4. **SEMPRE use --preview primeiro** em operações complexas para verificar matches
+5. **PREFIRA operações específicas**:
    - `copy/copydir` ao invés de recriar
    - `move/movedir` para reorganização
    - `delete/rmdir --backup` para exclusões
    - `mkdir --parents` para estruturas
-5. **USE `multiedit`** para mudanças relacionadas múltiplas em arquivos
+6. **USE `multiedit`** para mudanças relacionadas múltiplas em arquivos
+7. **USE matching avançado** quando strings exatas falharem:
+   - `--fuzzy` para diferenças de formatação
+   - `--regex` para patterns complexos
+   - `--ignore-whitespace` para problemas de espaçamento
+8. **USE input flexível para write**:
+   - `--content-file` para conteúdo de outros arquivos
+   - `--stdin` para pipes e entrada grande
 
 ### Fluxo Recomendado Completo
 
@@ -625,13 +778,20 @@ Lista conteúdo de diretórios com detecção de encoding, filtros e análise es
 # 3. Backup completo do projeto
 ./cctools copydir --source . --dest backups/$(date +%Y%m%d)/ --preserve-all
 
-# 4. Operações nos arquivos (preservando encoding)
+# 4. Preview antes de edições complexas
+./cctools edit --file arquivo.pas --old "texto_complexo" --new "novo_texto" --preview
+
+# 5. Operações nos arquivos (preservando encoding)
 ./cctools edit --file arquivo.pas --old "antigo" --new "novo"
 
-# 5. Reorganização de estrutura
+# 6. Para strings problemáticas, use matching avançado
+./cctools edit --file arquivo.pas --old "string aproximada" --new "nova string" --fuzzy
+./cctools edit --file arquivo.js --old "function\\s+\\w+" --new "async function" --regex --replace-all
+
+# 7. Reorganização de estrutura
 ./cctools movedir --source old_structure/ --dest new_structure/
 
-# 6. Limpeza segura
+# 8. Limpeza segura
 ./cctools rmdir --path temp/ --recursive --backup
 ```
 
@@ -709,4 +869,85 @@ Lista conteúdo de diretórios com detecção de encoding, filtros e análise es
 
 ## Resumo
 
-**CCTools garante preservação de encoding em TODAS as operações de arquivo e diretório (leitura, escrita, edição, cópia, movimentação, exclusão, criação e listagem). Use SEMPRE no lugar das ferramentas padrão para evitar corrupção de caracteres especiais e manter compatibilidade total com sistemas legados.**
+## TROUBLESHOOTING - Problemas Comuns Resolvidos
+
+### Problema: "String not found" com texto que existe no arquivo
+**Causa**: String exata não correspondida devido a diferenças de formatação
+**Soluções**:
+```bash
+# 1. Use preview para ver exatamente o que foi encontrado
+./cctools edit --file arquivo.txt --old "texto problema" --new "novo texto" --preview
+
+# 2. Use fuzzy matching para tolerância a diferenças
+./cctools edit --file arquivo.txt --old "texto problema" --new "novo texto" --fuzzy
+
+# 3. Ignore diferenças de whitespace
+./cctools edit --file arquivo.txt --old "if   condition:" --new "if condition:" --ignore-whitespace
+
+# 4. Use regex para patterns flexíveis
+./cctools edit --file arquivo.txt --old "if\\s+condition:" --new "if condition:" --regex
+```
+
+### Problema: "unexpected EOF" com comando write
+**Causa**: Limitações do shell com strings grandes nos argumentos
+**Soluções**:
+```bash
+# 1. Use content-file para arquivos grandes
+./cctools write --file output.txt --content-file input.txt
+
+# 2. Use stdin para pipes
+cat large_content.txt | ./cctools write --file output.txt --stdin
+
+# 3. Para input interativo grande
+./cctools write --file output.txt --stdin
+```
+
+### Problema: MultiEdit falha com algumas operações funcionando individualmente
+**Causa**: Falha em uma operação aborta todas as outras
+**Soluções**:
+```bash
+# 1. Use preview para identificar problemas antes de executar
+./cctools multiedit --edits-file changes.json --preview
+
+# 2. Use continue-on-error para operações parciais
+./cctools multiedit --edits-file changes.json --continue-on-error
+
+# 3. Use dry-run para testar completamente
+./cctools multiedit --edits-file changes.json --dry-run
+```
+
+### Problema: Mensagens de erro pouco úteis
+**Solução**: Versões atualizadas fornecem:
+- Contexto visual das linhas adjacentes
+- Sugestões de matches similares
+- Preview das mudanças propostas
+- Informações detalhadas sobre cada match
+
+### Dicas de Performance
+
+#### Para Refatorações Grandes:
+```bash
+# 1. Sempre use preview primeiro
+./cctools multiedit --edits-file big_refactor.json --preview
+
+# 2. Para operações que podem falhar parcialmente
+./cctools multiedit --edits-file big_refactor.json --continue-on-error --verbose
+
+# 3. Para arquivos muito grandes, considere dividir as operações
+```
+
+#### Para Projetos Legados:
+```bash
+# 1. Sempre detecte encoding primeiro
+./cctools listdir --recursive --show-encoding --verbose
+
+# 2. Use fuzzy matching para códigos com formatação inconsistente
+./cctools edit --file legacy.pas --old "código antigo" --new "código novo" --fuzzy
+
+# 3. Faça backup completo antes de mudanças grandes
+./cctools copydir --source . --dest ../backup_$(date +%Y%m%d) --preserve-all
+```
+
+## Resumo
+
+**CCTools garante preservação de encoding em TODAS as operações de arquivo e diretório (leitura, escrita, edição, cópia, movimentação, exclusão, criação e listagem). As melhorias implementadas resolvem os principais problemas de usabilidade: matching de strings robusto, preview de operações, input flexível para write, e mensagens de erro informativas. Use SEMPRE no lugar das ferramentas padrão para evitar corrupção de caracteres especiais e manter compatibilidade total com sistemas legados.**

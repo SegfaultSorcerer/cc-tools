@@ -25,11 +25,15 @@ rolled back and the original file is restored.
 The edits are specified in a JSON file with the following format:
 {
   "file_path": "/path/to/file.txt",
+  "continue_on_error": false,
+  "dry_run": false,
   "edits": [
     {
       "old_string": "text to replace",
       "new_string": "replacement text",
-      "replace_all": false
+      "replace_all": false,
+      "use_regex": false,
+      "fuzzy_match": false
     },
     {
       "old_string": "another text",
@@ -46,13 +50,19 @@ Examples:
 }
 
 var (
-	multiEditFile string
+	multiEditFile       string
+	multiEditPreview    bool
+	multiEditContinue   bool
+	multiEditDryRun     bool
 )
 
 func init() {
 	rootCmd.AddCommand(multiEditCmd)
 
 	multiEditCmd.Flags().StringVarP(&multiEditFile, "edits-file", "e", "", "JSON file containing edit operations (required)")
+	multiEditCmd.Flags().BoolVar(&multiEditPreview, "preview", false, "Preview all changes without applying them")
+	multiEditCmd.Flags().BoolVar(&multiEditContinue, "continue-on-error", false, "Continue processing even if individual edits fail")
+	multiEditCmd.Flags().BoolVar(&multiEditDryRun, "dry-run", false, "Perform dry run showing what would be changed")
 	multiEditCmd.MarkFlagRequired("edits-file")
 }
 
@@ -121,6 +131,14 @@ func runMultiEditCmd(cmd *cobra.Command, args []string) error {
 	}
 	editRequest.FilePath = absPath
 
+	// Override JSON settings with command line flags if specified
+	if multiEditContinue {
+		editRequest.ContinueOnError = true
+	}
+	if multiEditDryRun || multiEditPreview {
+		editRequest.DryRun = true
+	}
+
 	// Validate each edit
 	for i, edit := range editRequest.Edits {
 		if edit.OldString == "" {
@@ -140,10 +158,43 @@ func runMultiEditCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("multi-edit failed: %w", err)
 	}
 
-	if !result.Success {
+	// Handle dry run and preview modes
+	if editRequest.DryRun || multiEditPreview {
+		fmt.Println("DRY RUN MODE - No changes applied")
+		if result.PreviewDiff != "" {
+			fmt.Println(result.PreviewDiff)
+		}
+		if len(result.PartialErrors) > 0 {
+			fmt.Println("\nIssues found:")
+			for i, err := range result.PartialErrors {
+				fmt.Printf("  Edit %d: %s\n", i+1, err)
+			}
+		}
+		if len(result.MatchedLines) > 0 {
+			fmt.Printf("\nTotal matches found: %d\n", len(result.MatchedLines))
+		}
+		return nil
+	}
+
+	// Handle continue-on-error mode
+	if editRequest.ContinueOnError && len(result.PartialErrors) > 0 {
+		fmt.Printf("Multi-edit completed with some errors: %s\n", absPath)
+		fmt.Printf("Successful operations: %d/%d\n",
+			len(editRequest.Edits)-len(result.PartialErrors), len(editRequest.Edits))
+		fmt.Println("\nErrors encountered:")
+		for i, err := range result.PartialErrors {
+			fmt.Printf("  Edit %d: %s\n", i+1, err)
+		}
+	} else if !result.Success {
 		// Display the detailed message
 		fmt.Println("Multi-edit operation failed:")
 		fmt.Println(result.Message)
+		if len(result.PartialErrors) > 0 {
+			fmt.Println("\nDetailed errors:")
+			for i, err := range result.PartialErrors {
+				fmt.Printf("  Edit %d: %s\n", i+1, err)
+			}
+		}
 		return fmt.Errorf("operation unsuccessful")
 	}
 
@@ -153,10 +204,24 @@ func runMultiEditCmd(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Multi-edit completed successfully: %s\n", absPath)
 		fmt.Printf("Operation: %s\n", result.Message)
 		fmt.Printf("Number of edits: %d\n", len(editRequest.Edits))
+		if editRequest.ContinueOnError {
+			fmt.Printf("Continue on error: enabled\n")
+		}
 		fmt.Println("Edit operations:")
 		for i, edit := range editRequest.Edits {
-			fmt.Printf("  %d. Replace %q with %q (replace_all: %t)\n",
-				i+1, edit.OldString, edit.NewString, edit.ReplaceAll)
+			status := "✓"
+			if len(result.PartialErrors) > i && result.PartialErrors[i] != "" {
+				status = "✗"
+			}
+			fmt.Printf("  %s %d. Replace %q with %q (replace_all: %t",
+				status, i+1, edit.OldString, edit.NewString, edit.ReplaceAll)
+			if edit.UseRegex {
+				fmt.Printf(", regex: true")
+			}
+			if edit.FuzzyMatch {
+				fmt.Printf(", fuzzy: true")
+			}
+			fmt.Printf(")\n")
 		}
 	} else {
 		fmt.Printf("Multi-edit completed successfully: %s\n", absPath)

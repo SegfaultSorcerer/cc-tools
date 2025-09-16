@@ -75,6 +75,11 @@ func (f *FileOperations) WriteFile(filePath, content, targetEncoding string) err
 
 // EditFile performs a single edit operation on a file
 func (f *FileOperations) EditFile(filePath, oldString, newString string, replaceAll bool) (*models.EditResult, error) {
+	return f.EditFileWithOptions(filePath, oldString, newString, replaceAll, &models.MatchingOptions{}, false)
+}
+
+// EditFileWithOptions performs a single edit operation on a file with advanced options
+func (f *FileOperations) EditFileWithOptions(filePath, oldString, newString string, replaceAll bool, options *models.MatchingOptions, preview bool) (*models.EditResult, error) {
 	// Read file with encoding detection
 	fileInfo, err := f.ReadFile(filePath)
 	if err != nil {
@@ -95,67 +100,73 @@ func (f *FileOperations) EditFile(filePath, oldString, newString string, replace
 		}, err
 	}
 
-	// Perform replacement
+	// Try advanced matching first
+	matchInfo, matchErr := f.advancedStringMatch(content, oldString, options)
+
+	// If preview mode, show what would be changed
+	if preview {
+		if matchErr != nil {
+			// Try to find similar matches for better preview
+			matches := findStringMatches(content, oldString)
+			errorMsg := fmt.Sprintf("No matches found for '%s'", oldString)
+			if len(matches) > 0 {
+				errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
+			}
+			return &models.EditResult{
+				Success:     false,
+				Message:     errorMsg,
+				Error:       matchErr,
+				PreviewDiff: "No changes would be made.",
+			}, nil
+		}
+
+		// Generate preview
+		previewDiff := f.generateDiffPreview(matchInfo.MatchText, newString, matchInfo)
+		return &models.EditResult{
+			Success:      true,
+			Message:      "Preview generated successfully",
+			PreviewDiff:  previewDiff,
+			MatchedLines: []models.MatchInfo{*matchInfo},
+		}, nil
+	}
+
+	// Perform actual replacement
 	var newContent string
-	if replaceAll {
-		count := strings.Count(content, oldString)
-		if count == 0 {
-			// Try to find similar matches for better error message
-			matches := findStringMatches(content, oldString)
-			errorMsg := fmt.Sprintf("String '%s' not found in file", oldString)
-			if len(matches) > 0 {
-				errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
+	var allMatches []models.MatchInfo
+
+	// Use advanced matching if it found something, otherwise fall back to exact matching
+	if matchErr == nil {
+		// Use the matched string for replacement
+		if replaceAll {
+			// Find all matches using advanced matching
+			allMatches = f.findAllMatches(content, oldString, options)
+			if len(allMatches) == 0 {
+				return f.handleNoMatchesFound(content, oldString)
 			}
-			return &models.EditResult{
-				Success: false,
-				Message: errorMsg,
-				Error:   fmt.Errorf("old string not found"),
-			}, nil
+			newContent = f.replaceAllMatches(content, allMatches, newString)
+		} else {
+			// Single replacement
+			allMatches = []models.MatchInfo{*matchInfo}
+			newContent = f.replaceSingleMatch(content, matchInfo, newString)
 		}
-		newContent = strings.ReplaceAll(content, oldString, newString)
 	} else {
-		// Check if old string exists and is unique
+		// Fall back to exact string matching
 		count := strings.Count(content, oldString)
 		if count == 0 {
-			// Try to find similar matches for better error message
-			matches := findStringMatches(content, oldString)
-			errorMsg := fmt.Sprintf("String '%s' not found in file", oldString)
-			if len(matches) > 0 {
-				errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
-			}
-
-			// Try fuzzy matching
-			if lineIndex, matchedLine := findBestMatch(content, oldString); lineIndex != -1 {
-				errorMsg += fmt.Sprintf("\nBest fuzzy match found at line %d: %q", lineIndex+1, matchedLine)
-			}
-
-			return &models.EditResult{
-				Success: false,
-				Message: errorMsg,
-				Error:   fmt.Errorf("old string not found"),
-			}, nil
+			return f.handleNoMatchesFound(content, oldString)
 		}
-		if count > 1 {
-			// Show context for all matches
-			lines := strings.Split(content, "\n")
-			var matchLines []string
-			for i, line := range lines {
-				if strings.Contains(line, oldString) {
-					matchLines = append(matchLines, fmt.Sprintf("Line %d: %q", i+1, strings.TrimSpace(line)))
-				}
-			}
-			errorMsg := fmt.Sprintf("String '%s' appears %d times in file, use --replace-all flag", oldString, count)
-			if len(matchLines) > 0 {
-				errorMsg += "\nMatches found at:\n" + strings.Join(matchLines, "\n")
-			}
-
-			return &models.EditResult{
-				Success: false,
-				Message: errorMsg,
-				Error:   fmt.Errorf("string not unique"),
-			}, nil
+		if count > 1 && !replaceAll {
+			return f.handleMultipleMatches(content, oldString, count)
 		}
-		newContent = strings.Replace(content, oldString, newString, 1)
+
+		if replaceAll {
+			newContent = strings.ReplaceAll(content, oldString, newString)
+		} else {
+			newContent = strings.Replace(content, oldString, newString, 1)
+		}
+
+		// Create match info for exact matches
+		allMatches = f.findExactMatches(content, oldString, strings.Split(content, "\n"))
 	}
 
 	// Create backup
@@ -183,9 +194,10 @@ func (f *FileOperations) EditFile(filePath, oldString, newString string, replace
 	os.Remove(backupPath)
 
 	return &models.EditResult{
-		Success: true,
-		Message: "File edited successfully",
-		Error:   nil,
+		Success:      true,
+		Message:      "File edited successfully",
+		MatchedLines: allMatches,
+		Error:        nil,
 	}, nil
 }
 
@@ -211,7 +223,12 @@ func (f *FileOperations) MultiEditFile(request *models.MultiEditRequest) (*model
 		}, err
 	}
 
-	// Create backup
+	// Handle dry run mode
+	if request.DryRun {
+		return f.performDryRun(content, request)
+	}
+
+	// Create backup (only if not dry run)
 	backupPath := request.FilePath + ".backup"
 	if err := f.createBackup(request.FilePath, backupPath); err != nil {
 		return &models.EditResult{
@@ -223,55 +240,53 @@ func (f *FileOperations) MultiEditFile(request *models.MultiEditRequest) (*model
 
 	// Apply all edits sequentially
 	workingContent := content
+	var allMatches []models.MatchInfo
+	var partialErrors []string
+	successfulEdits := 0
+
 	for i, edit := range request.Edits {
-		if edit.ReplaceAll {
-			workingContent = strings.ReplaceAll(workingContent, edit.OldString, edit.NewString)
+		// Create matching options for each edit
+		options := &models.MatchingOptions{
+			UseRegex:         edit.UseRegex,
+			FuzzyMatch:       edit.FuzzyMatch,
+			IgnoreWhitespace: false, // Could be added to EditOperation if needed
+			CaseInsensitive:  false, // Could be added to EditOperation if needed
+		}
+
+		// Try advanced matching
+		if matchInfo, matchErr := f.advancedStringMatch(workingContent, edit.OldString, options); matchErr == nil {
+			// Success - apply the edit
+			if edit.ReplaceAll {
+				matches := f.findAllMatches(workingContent, edit.OldString, options)
+				workingContent = f.replaceAllMatches(workingContent, matches, edit.NewString)
+				allMatches = append(allMatches, matches...)
+			} else {
+				workingContent = f.replaceSingleMatch(workingContent, matchInfo, edit.NewString)
+				allMatches = append(allMatches, *matchInfo)
+			}
+			successfulEdits++
 		} else {
-			count := strings.Count(workingContent, edit.OldString)
-			if count == 0 {
+			// Edit failed
+			errorMsg := fmt.Sprintf("Edit %d failed: string '%s' not found", i+1, edit.OldString)
+
+			// Try to find similar matches for better error message
+			matches := findStringMatches(workingContent, edit.OldString)
+			if len(matches) > 0 {
+				errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
+			}
+
+			partialErrors = append(partialErrors, errorMsg)
+
+			// If continue on error is disabled, abort everything
+			if !request.ContinueOnError {
 				f.restoreBackup(backupPath, request.FilePath)
-
-				// Enhanced error message with similar matches
-				matches := findStringMatches(workingContent, edit.OldString)
-				errorMsg := fmt.Sprintf("Edit %d failed: string '%s' not found", i+1, edit.OldString)
-				if len(matches) > 0 {
-					errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
-				}
-
-				// Try fuzzy matching
-				if lineIndex, matchedLine := findBestMatch(workingContent, edit.OldString); lineIndex != -1 {
-					errorMsg += fmt.Sprintf("\nBest fuzzy match found at line %d: %q", lineIndex+1, matchedLine)
-				}
-
 				return &models.EditResult{
-					Success: false,
-					Message: errorMsg,
-					Error:   fmt.Errorf("string not found in edit %d", i+1),
+					Success:       false,
+					Message:       errorMsg,
+					Error:         fmt.Errorf("string not found in edit %d", i+1),
+					PartialErrors: partialErrors,
 				}, fmt.Errorf("string not found in edit %d", i+1)
 			}
-			if count > 1 {
-				f.restoreBackup(backupPath, request.FilePath)
-
-				// Show context for all matches
-				lines := strings.Split(workingContent, "\n")
-				var matchLines []string
-				for j, line := range lines {
-					if strings.Contains(line, edit.OldString) {
-						matchLines = append(matchLines, fmt.Sprintf("Line %d: %q", j+1, strings.TrimSpace(line)))
-					}
-				}
-				errorMsg := fmt.Sprintf("Edit %d failed: string '%s' appears %d times, use replace_all: true", i+1, edit.OldString, count)
-				if len(matchLines) > 0 {
-					errorMsg += "\nMatches found at:\n" + strings.Join(matchLines, "\n")
-				}
-
-				return &models.EditResult{
-					Success: false,
-					Message: errorMsg,
-					Error:   fmt.Errorf("string not unique in edit %d", i+1),
-				}, fmt.Errorf("string not unique in edit %d", i+1)
-			}
-			workingContent = strings.Replace(workingContent, edit.OldString, edit.NewString, 1)
 		}
 	}
 
@@ -289,10 +304,67 @@ func (f *FileOperations) MultiEditFile(request *models.MultiEditRequest) (*model
 	// Remove backup on success
 	os.Remove(backupPath)
 
+	// Determine success status
+	success := len(partialErrors) == 0
+	message := fmt.Sprintf("Applied %d/%d edits successfully", successfulEdits, len(request.Edits))
+
 	return &models.EditResult{
-		Success: true,
-		Message: fmt.Sprintf("Applied %d edits successfully", len(request.Edits)),
-		Error:   nil,
+		Success:       success,
+		Message:       message,
+		MatchedLines:  allMatches,
+		PartialErrors: partialErrors,
+		Error:         nil,
+	}, nil
+}
+
+// performDryRun simulates the multi-edit operation without making changes
+func (f *FileOperations) performDryRun(content string, request *models.MultiEditRequest) (*models.EditResult, error) {
+	var allMatches []models.MatchInfo
+	var partialErrors []string
+	var previewParts []string
+
+	previewParts = append(previewParts, "DRY RUN - Multi-edit Preview")
+	previewParts = append(previewParts, "=============================\n")
+
+	for i, edit := range request.Edits {
+		previewParts = append(previewParts, fmt.Sprintf("Edit %d: Replace %q with %q", i+1, edit.OldString, edit.NewString))
+
+		// Create matching options for each edit
+		options := &models.MatchingOptions{
+			UseRegex:         edit.UseRegex,
+			FuzzyMatch:       edit.FuzzyMatch,
+			IgnoreWhitespace: false,
+			CaseInsensitive:  false,
+		}
+
+		// Try to find matches
+		if matchInfo, matchErr := f.advancedStringMatch(content, edit.OldString, options); matchErr == nil {
+			if edit.ReplaceAll {
+				matches := f.findAllMatches(content, edit.OldString, options)
+				previewParts = append(previewParts, fmt.Sprintf("  ✓ Would replace %d occurrence(s)", len(matches)))
+				for _, match := range matches {
+					previewParts = append(previewParts, fmt.Sprintf("    Line %d: %s", match.LineNumber, strings.TrimSpace(match.LineText)))
+				}
+				allMatches = append(allMatches, matches...)
+			} else {
+				previewParts = append(previewParts, fmt.Sprintf("  ✓ Would replace 1 occurrence"))
+				previewParts = append(previewParts, fmt.Sprintf("    Line %d: %s", matchInfo.LineNumber, strings.TrimSpace(matchInfo.LineText)))
+				allMatches = append(allMatches, *matchInfo)
+			}
+		} else {
+			previewParts = append(previewParts, "  ✗ No matches found")
+			errorMsg := fmt.Sprintf("Edit %d: string '%s' not found", i+1, edit.OldString)
+			partialErrors = append(partialErrors, errorMsg)
+		}
+		previewParts = append(previewParts, "")
+	}
+
+	return &models.EditResult{
+		Success:       len(partialErrors) == 0,
+		Message:       "Dry run completed",
+		PreviewDiff:   strings.Join(previewParts, "\n"),
+		MatchedLines:  allMatches,
+		PartialErrors: partialErrors,
 	}, nil
 }
 
@@ -375,7 +447,213 @@ func simplifyString(s string) string {
 	return string(result)
 }
 
-// findStringMatches returns all possible matches with context
+// advancedStringMatch performs advanced string matching with multiple strategies
+func (f *FileOperations) advancedStringMatch(content, target string, options *models.MatchingOptions) (*models.MatchInfo, error) {
+	lines := strings.Split(content, "\n")
+
+	// Strategy 1: Exact match
+	if matches := f.findExactMatches(content, target, lines); len(matches) > 0 {
+		return &matches[0], nil
+	}
+
+	// Strategy 2: Regex matching
+	if options.UseRegex {
+		if matches := f.findRegexMatches(content, target, lines); len(matches) > 0 {
+			return &matches[0], nil
+		}
+	}
+
+	// Strategy 3: Fuzzy matching
+	if options.FuzzyMatch {
+		if matches := f.findFuzzyMatches(content, target, lines, options); len(matches) > 0 {
+			return &matches[0], nil
+		}
+	}
+
+	return nil, fmt.Errorf("no matches found")
+}
+
+// findExactMatches finds exact string matches
+func (f *FileOperations) findExactMatches(content, target string, lines []string) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	for i, line := range lines {
+		if strings.Contains(line, target) {
+			context := f.getLineContext(lines, i, 2)
+			matches = append(matches, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   line,
+				MatchText:  target,
+				Context:    context,
+			})
+		}
+	}
+
+	return matches
+}
+
+// findRegexMatches finds matches using regex
+func (f *FileOperations) findRegexMatches(content, pattern string, lines []string) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	regex, err := regexp.Compile(pattern)
+	if err != nil {
+		return matches
+	}
+
+	for i, line := range lines {
+		if match := regex.FindString(line); match != "" {
+			context := f.getLineContext(lines, i, 2)
+			matches = append(matches, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   line,
+				MatchText:  match,
+				Context:    context,
+			})
+		}
+	}
+
+	return matches
+}
+
+// findFuzzyMatches finds matches using fuzzy logic
+func (f *FileOperations) findFuzzyMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	normalizedTarget := f.normalizeForMatching(target, options)
+
+	for i, line := range lines {
+		normalizedLine := f.normalizeForMatching(line, options)
+
+		// Try substring match
+		if strings.Contains(normalizedLine, normalizedTarget) {
+			context := f.getLineContext(lines, i, 2)
+			matches = append(matches, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   line,
+				MatchText:  f.extractMatchFromLine(line, target),
+				Context:    context,
+			})
+			continue
+		}
+
+		// Try word-based matching
+		if f.fuzzyWordMatch(normalizedLine, normalizedTarget, 0.7) {
+			context := f.getLineContext(lines, i, 2)
+			matches = append(matches, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   line,
+				MatchText:  f.extractMatchFromLine(line, target),
+				Context:    context,
+			})
+		}
+	}
+
+	return matches
+}
+
+// normalizeForMatching normalizes strings for fuzzy matching
+func (f *FileOperations) normalizeForMatching(s string, options *models.MatchingOptions) string {
+	result := s
+
+	if options.CaseInsensitive {
+		result = strings.ToLower(result)
+	}
+
+	if options.IgnoreWhitespace {
+		// Normalize whitespace - replace multiple spaces with single space
+		re := regexp.MustCompile(`\s+`)
+		result = re.ReplaceAllString(result, " ")
+		result = strings.TrimSpace(result)
+	}
+
+	return result
+}
+
+// fuzzyWordMatch performs word-based fuzzy matching
+func (f *FileOperations) fuzzyWordMatch(line, target string, threshold float64) bool {
+	lineWords := strings.Fields(line)
+	targetWords := strings.Fields(target)
+
+	if len(targetWords) == 0 {
+		return false
+	}
+
+	matchedWords := 0
+	for _, targetWord := range targetWords {
+		for _, lineWord := range lineWords {
+			if strings.Contains(lineWord, targetWord) || strings.Contains(targetWord, lineWord) {
+				matchedWords++
+				break
+			}
+		}
+	}
+
+	ratio := float64(matchedWords) / float64(len(targetWords))
+	return ratio >= threshold
+}
+
+// extractMatchFromLine extracts the best matching part from a line
+func (f *FileOperations) extractMatchFromLine(line, target string) string {
+	// Try exact match first
+	if strings.Contains(line, target) {
+		return target
+	}
+
+	// Return the line trimmed if no exact match
+	return strings.TrimSpace(line)
+}
+
+// getLineContext returns surrounding lines for context
+func (f *FileOperations) getLineContext(lines []string, lineIndex, contextSize int) []string {
+	start := lineIndex - contextSize
+	if start < 0 {
+		start = 0
+	}
+
+	end := lineIndex + contextSize + 1
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	context := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		prefix := "  "
+		if i == lineIndex {
+			prefix = "> "
+		}
+		context = append(context, fmt.Sprintf("%s%d: %s", prefix, i+1, lines[i]))
+	}
+
+	return context
+}
+
+// generateDiffPreview generates a diff-like preview of changes
+func (f *FileOperations) generateDiffPreview(original, modified string, matchInfo *models.MatchInfo) string {
+	var diff strings.Builder
+
+	diff.WriteString("Preview of changes:\n")
+	diff.WriteString("==================\n\n")
+
+	if matchInfo != nil {
+		diff.WriteString(fmt.Sprintf("Match found at line %d:\n", matchInfo.LineNumber))
+		for _, contextLine := range matchInfo.Context {
+			diff.WriteString(contextLine + "\n")
+		}
+		diff.WriteString("\n")
+	}
+
+	// Show before/after if we have specific match info
+	if matchInfo != nil && matchInfo.MatchText != "" {
+		diff.WriteString("Change preview:\n")
+		diff.WriteString(fmt.Sprintf("- %s\n", matchInfo.MatchText))
+		diff.WriteString(fmt.Sprintf("+ %s\n", modified))
+	}
+
+	return diff.String()
+}
+
+// findStringMatches returns all possible matches with context (enhanced version)
 func findStringMatches(content, target string) []string {
 	var matches []string
 
@@ -403,6 +681,110 @@ func findStringMatches(content, target string) []string {
 	}
 
 	return matches
+}
+
+// findAllMatches finds all matches using advanced matching
+func (f *FileOperations) findAllMatches(content, target string, options *models.MatchingOptions) []models.MatchInfo {
+	lines := strings.Split(content, "\n")
+	var allMatches []models.MatchInfo
+
+	// Exact matches first
+	exactMatches := f.findExactMatches(content, target, lines)
+	allMatches = append(allMatches, exactMatches...)
+
+	// If no exact matches and fuzzy is enabled, try fuzzy
+	if len(allMatches) == 0 && options.FuzzyMatch {
+		fuzzyMatches := f.findFuzzyMatches(content, target, lines, options)
+		allMatches = append(allMatches, fuzzyMatches...)
+	}
+
+	// If no matches and regex is enabled, try regex
+	if len(allMatches) == 0 && options.UseRegex {
+		regexMatches := f.findRegexMatches(content, target, lines)
+		allMatches = append(allMatches, regexMatches...)
+	}
+
+	return allMatches
+}
+
+// replaceAllMatches replaces all matched strings
+func (f *FileOperations) replaceAllMatches(content string, matches []models.MatchInfo, newString string) string {
+	lines := strings.Split(content, "\n")
+
+	// Process matches in reverse order to maintain line numbers
+	for i := len(matches) - 1; i >= 0; i-- {
+		match := matches[i]
+		lineIndex := match.LineNumber - 1
+		if lineIndex >= 0 && lineIndex < len(lines) {
+			lines[lineIndex] = strings.Replace(lines[lineIndex], match.MatchText, newString, 1)
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// replaceSingleMatch replaces a single matched string
+func (f *FileOperations) replaceSingleMatch(content string, match *models.MatchInfo, newString string) string {
+	lines := strings.Split(content, "\n")
+	lineIndex := match.LineNumber - 1
+
+	if lineIndex >= 0 && lineIndex < len(lines) {
+		lines[lineIndex] = strings.Replace(lines[lineIndex], match.MatchText, newString, 1)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// handleNoMatchesFound handles the case when no matches are found
+func (f *FileOperations) handleNoMatchesFound(content, target string) (*models.EditResult, error) {
+	matches := findStringMatches(content, target)
+	errorMsg := fmt.Sprintf("String '%s' not found in file", target)
+	if len(matches) > 0 {
+		errorMsg += "\nSimilar matches found:\n" + strings.Join(matches, "\n")
+	}
+
+	// Try fuzzy matching for suggestions
+	if lineIndex, matchedLine := findBestMatch(content, target); lineIndex != -1 {
+		errorMsg += fmt.Sprintf("\nBest fuzzy match found at line %d: %q", lineIndex+1, matchedLine)
+	}
+
+	return &models.EditResult{
+		Success: false,
+		Message: errorMsg,
+		Error:   fmt.Errorf("old string not found"),
+	}, nil
+}
+
+// handleMultipleMatches handles the case when multiple matches are found but replaceAll is false
+func (f *FileOperations) handleMultipleMatches(content, target string, count int) (*models.EditResult, error) {
+	lines := strings.Split(content, "\n")
+	var matchLines []string
+	var matchInfos []models.MatchInfo
+
+	for i, line := range lines {
+		if strings.Contains(line, target) {
+			matchLines = append(matchLines, fmt.Sprintf("Line %d: %q", i+1, strings.TrimSpace(line)))
+			context := f.getLineContext(lines, i, 1)
+			matchInfos = append(matchInfos, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   line,
+				MatchText:  target,
+				Context:    context,
+			})
+		}
+	}
+
+	errorMsg := fmt.Sprintf("String '%s' appears %d times in file, use --replace-all flag", target, count)
+	if len(matchLines) > 0 {
+		errorMsg += "\nMatches found at:\n" + strings.Join(matchLines, "\n")
+	}
+
+	return &models.EditResult{
+		Success:      false,
+		Message:      errorMsg,
+		Error:        fmt.Errorf("string not unique"),
+		MatchedLines: matchInfos,
+	}, nil
 }
 
 // DecodeFileContent is a public wrapper for decoding file content

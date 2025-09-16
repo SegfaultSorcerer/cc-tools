@@ -3,7 +3,9 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
+	"cctools/internal/models"
 	"cctools/pkg/fileops"
 
 	"github.com/spf13/cobra"
@@ -28,10 +30,15 @@ Examples:
 }
 
 var (
-	editFilePath   string
-	editOldString  string
-	editNewString  string
-	editReplaceAll bool
+	editFilePath        string
+	editOldString       string
+	editNewString       string
+	editReplaceAll      bool
+	editPreview         bool
+	editUseRegex        bool
+	editFuzzyMatch      bool
+	editIgnoreWhitespace bool
+	editCaseInsensitive bool
 )
 
 func init() {
@@ -41,6 +48,11 @@ func init() {
 	editCmd.Flags().StringVarP(&editOldString, "old", "o", "", "String to be replaced (required)")
 	editCmd.Flags().StringVarP(&editNewString, "new", "n", "", "Replacement string (required)")
 	editCmd.Flags().BoolVar(&editReplaceAll, "replace-all", false, "Replace all occurrences (default: false)")
+	editCmd.Flags().BoolVar(&editPreview, "preview", false, "Preview changes without applying them")
+	editCmd.Flags().BoolVar(&editUseRegex, "regex", false, "Treat old string as regular expression")
+	editCmd.Flags().BoolVar(&editFuzzyMatch, "fuzzy", false, "Enable fuzzy matching for strings")
+	editCmd.Flags().BoolVar(&editIgnoreWhitespace, "ignore-whitespace", false, "Ignore differences in whitespace")
+	editCmd.Flags().BoolVar(&editCaseInsensitive, "case-insensitive", false, "Perform case-insensitive matching")
 
 	editCmd.MarkFlagRequired("file")
 	editCmd.MarkFlagRequired("old")
@@ -57,8 +69,16 @@ func runEditCmd(cmd *cobra.Command, args []string) error {
 	// Create file operations handler
 	fileOps := fileops.NewFileOperations()
 
-	// Perform the edit
-	result, err := fileOps.EditFile(absPath, editOldString, editNewString, editReplaceAll)
+	// Setup matching options
+	options := &models.MatchingOptions{
+		UseRegex:         editUseRegex,
+		FuzzyMatch:       editFuzzyMatch,
+		IgnoreWhitespace: editIgnoreWhitespace,
+		CaseInsensitive:  editCaseInsensitive,
+	}
+
+	// Perform the edit with advanced options
+	result, err := fileOps.EditFileWithOptions(absPath, editOldString, editNewString, editReplaceAll, options, editPreview)
 	if err != nil {
 		return fmt.Errorf("edit failed: %w", err)
 	}
@@ -67,7 +87,36 @@ func runEditCmd(cmd *cobra.Command, args []string) error {
 		// Display the detailed message
 		fmt.Println("Edit operation failed:")
 		fmt.Println(result.Message)
+
+		// Show matching suggestions if available
+		if len(result.MatchedLines) > 0 {
+			fmt.Println("\nSimilar matches found:")
+			for _, match := range result.MatchedLines {
+				fmt.Printf("Line %d: %s\n", match.LineNumber, strings.TrimSpace(match.LineText))
+			}
+		}
+
 		return fmt.Errorf("operation unsuccessful")
+	}
+
+	// Handle preview mode
+	if editPreview {
+		fmt.Println("PREVIEW MODE - No changes applied")
+		fmt.Println(result.PreviewDiff)
+
+		if len(result.MatchedLines) > 0 {
+			fmt.Println("Matches found:")
+			for _, match := range result.MatchedLines {
+				fmt.Printf("  Line %d: %s\n", match.LineNumber, strings.TrimSpace(match.LineText))
+				if len(match.Context) > 0 {
+					fmt.Println("  Context:")
+					for _, contextLine := range match.Context {
+						fmt.Printf("    %s\n", contextLine)
+					}
+				}
+			}
+		}
+		return nil
 	}
 
 	// Get verbose flag from parent command
@@ -78,6 +127,15 @@ func runEditCmd(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Replace all: %t\n", editReplaceAll)
 		fmt.Printf("Old string: %q\n", editOldString)
 		fmt.Printf("New string: %q\n", editNewString)
+		if editUseRegex {
+			fmt.Printf("Regex mode: enabled\n")
+		}
+		if editFuzzyMatch {
+			fmt.Printf("Fuzzy matching: enabled\n")
+		}
+		if len(result.MatchedLines) > 0 {
+			fmt.Printf("Matches processed: %d\n", len(result.MatchedLines))
+		}
 	} else {
 		fmt.Printf("File edited successfully: %s\n", absPath)
 	}
