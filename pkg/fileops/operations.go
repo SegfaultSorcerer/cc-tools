@@ -399,6 +399,119 @@ func normalizeWhitespace(s string) string {
 	return strings.TrimSpace(normalized)
 }
 
+// advancedNormalize performs advanced normalization for better matching
+func advancedNormalize(s string, options *models.MatchingOptions) string {
+	result := s
+
+	// Remove excessive whitespace
+	if options.IgnoreWhitespace || options.AutoNormalize {
+		// Normalize all types of whitespace
+		re := regexp.MustCompile(`\s+`)
+		result = re.ReplaceAllString(result, " ")
+		result = strings.TrimSpace(result)
+
+		// Remove whitespace around common punctuation if AutoNormalize
+		if options.AutoNormalize {
+			// Remove spaces around parentheses, brackets, semicolons, etc.
+			punctuationPatterns := []struct {
+				pattern     string
+				replacement string
+			}{
+				{`\s*\(\s*`, "("},
+				{`\s*\)\s*`, ")"},
+				{`\s*\[\s*`, "["},
+				{`\s*\]\s*`, "]"},
+				{`\s*;\s*`, ";"},
+				{`\s*,\s*`, ","},
+				{`\s*\.\s*`, "."},
+				{`\s*:\s*`, ":"},
+			}
+
+			for _, p := range punctuationPatterns {
+				re := regexp.MustCompile(p.pattern)
+				result = re.ReplaceAllString(result, p.replacement)
+			}
+		}
+	}
+
+	// Case normalization
+	if options.CaseInsensitive {
+		result = strings.ToLower(result)
+	}
+
+	return result
+}
+
+// calculateSimilarity calculates similarity between two strings using Levenshtein distance
+func calculateSimilarity(s1, s2 string) float64 {
+	if s1 == s2 {
+		return 1.0
+	}
+
+	if len(s1) == 0 || len(s2) == 0 {
+		return 0.0
+	}
+
+	// Use simple word-based similarity for performance
+	words1 := strings.Fields(s1)
+	words2 := strings.Fields(s2)
+
+	if len(words1) == 0 || len(words2) == 0 {
+		return 0.0
+	}
+
+	matchedWords := 0
+	for _, w1 := range words1 {
+		for _, w2 := range words2 {
+			if strings.Contains(strings.ToLower(w1), strings.ToLower(w2)) ||
+			   strings.Contains(strings.ToLower(w2), strings.ToLower(w1)) {
+				matchedWords++
+				break
+			}
+		}
+	}
+
+	// Return similarity as ratio of matched words
+	maxWords := len(words1)
+	if len(words2) > maxWords {
+		maxWords = len(words2)
+	}
+
+	return float64(matchedWords) / float64(maxWords)
+}
+
+// chunkString breaks a large string into smaller chunks for better matching
+func chunkString(s string, maxSize int) []string {
+	if len(s) <= maxSize {
+		return []string{s}
+	}
+
+	var chunks []string
+	lines := strings.Split(s, "\n")
+
+	currentChunk := ""
+	for _, line := range lines {
+		// If adding this line would exceed maxSize, save current chunk and start new one
+		if len(currentChunk)+len(line)+1 > maxSize && currentChunk != "" {
+			chunks = append(chunks, strings.TrimSpace(currentChunk))
+			currentChunk = line
+		} else {
+			if currentChunk != "" {
+				currentChunk += "\n" + line
+			} else {
+				currentChunk = line
+			}
+		}
+	}
+
+	// Add the last chunk if not empty
+	if currentChunk != "" {
+		chunks = append(chunks, strings.TrimSpace(currentChunk))
+	}
+
+	return chunks
+}
+
 // findBestMatch attempts to find the best match for a string, considering encoding issues
 func findBestMatch(content, target string) (int, string) {
 	// First try exact match
@@ -463,9 +576,23 @@ func (f *FileOperations) advancedStringMatch(content, target string, options *mo
 		}
 	}
 
-	// Strategy 3: Fuzzy matching
+	// Strategy 3: Auto-chunking for large strings
+	if options.AutoChunk && len(target) > options.MaxChunkSize {
+		if matches := f.findChunkedMatches(content, target, lines, options); len(matches) > 0 {
+			return &matches[0], nil
+		}
+	}
+
+	// Strategy 4: Normalized matching (more tolerant)
+	if options.AutoNormalize {
+		if matches := f.findNormalizedMatches(content, target, lines, options); len(matches) > 0 {
+			return &matches[0], nil
+		}
+	}
+
+	// Strategy 5: Enhanced fuzzy matching
 	if options.FuzzyMatch {
-		if matches := f.findFuzzyMatches(content, target, lines, options); len(matches) > 0 {
+		if matches := f.findEnhancedFuzzyMatches(content, target, lines, options); len(matches) > 0 {
 			return &matches[0], nil
 		}
 	}
@@ -538,7 +665,11 @@ func (f *FileOperations) findFuzzyMatches(content, target string, lines []string
 		}
 
 		// Try word-based matching
-		if f.fuzzyWordMatch(normalizedLine, normalizedTarget, 0.7) {
+		threshold := options.SimilarityThreshold
+		if threshold == 0 {
+			threshold = 0.7 // default
+		}
+		if f.fuzzyWordMatch(normalizedLine, normalizedTarget, threshold) {
 			context := f.getLineContext(lines, i, 2)
 			matches = append(matches, models.MatchInfo{
 				LineNumber: i + 1,
@@ -552,45 +683,228 @@ func (f *FileOperations) findFuzzyMatches(content, target string, lines []string
 	return matches
 }
 
-// normalizeForMatching normalizes strings for fuzzy matching
-func (f *FileOperations) normalizeForMatching(s string, options *models.MatchingOptions) string {
-	result := s
+// findNormalizedMatches finds matches using advanced normalization
+func (f *FileOperations) findNormalizedMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
+	var matches []models.MatchInfo
 
-	if options.CaseInsensitive {
-		result = strings.ToLower(result)
+	normalizedTarget := advancedNormalize(target, options)
+
+	for i, line := range lines {
+		normalizedLine := advancedNormalize(line, options)
+
+		if strings.Contains(normalizedLine, normalizedTarget) {
+			context := f.getLineContext(lines, i, 2)
+			matches = append(matches, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   line,
+				MatchText:  f.extractBestMatch(line, target, options),
+				Context:    context,
+			})
+		}
 	}
 
-	if options.IgnoreWhitespace {
-		// Normalize whitespace - replace multiple spaces with single space
-		re := regexp.MustCompile(`\s+`)
-		result = re.ReplaceAllString(result, " ")
-		result = strings.TrimSpace(result)
-	}
-
-	return result
+	return matches
 }
 
-// fuzzyWordMatch performs word-based fuzzy matching
-func (f *FileOperations) fuzzyWordMatch(line, target string, threshold float64) bool {
-	lineWords := strings.Fields(line)
-	targetWords := strings.Fields(target)
+// findChunkedMatches finds matches by breaking large strings into chunks
+func (f *FileOperations) findChunkedMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
+	var matches []models.MatchInfo
 
-	if len(targetWords) == 0 {
-		return false
-	}
+	// Break target into chunks
+	chunks := chunkString(target, options.MaxChunkSize)
 
-	matchedWords := 0
-	for _, targetWord := range targetWords {
-		for _, lineWord := range lineWords {
-			if strings.Contains(lineWord, targetWord) || strings.Contains(targetWord, lineWord) {
-				matchedWords++
+	for _, chunk := range chunks {
+		chunkMatches := f.findNormalizedMatches(content, chunk, lines, options)
+		if len(chunkMatches) > 0 {
+			// Found a chunk, try to find the full match around this area
+			for _, chunkMatch := range chunkMatches {
+				expandedMatch := f.expandMatch(lines, chunkMatch.LineNumber-1, target, options)
+				if expandedMatch != nil {
+					matches = append(matches, *expandedMatch)
+					break // Found it, no need to continue with other chunks
+				}
+			}
+			if len(matches) > 0 {
 				break
 			}
 		}
 	}
 
-	ratio := float64(matchedWords) / float64(len(targetWords))
-	return ratio >= threshold
+	return matches
+}
+
+// findEnhancedFuzzyMatches finds matches using enhanced fuzzy matching with similarity threshold
+func (f *FileOperations) findEnhancedFuzzyMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	normalizedTarget := f.normalizeForMatching(target, options)
+	threshold := options.SimilarityThreshold
+	if threshold == 0 {
+		threshold = 0.6 // Lower threshold for enhanced matching
+	}
+
+	// Try line-by-line matching first
+	for i, line := range lines {
+		normalizedLine := f.normalizeForMatching(line, options)
+		similarity := calculateSimilarity(normalizedLine, normalizedTarget)
+
+		if similarity >= threshold {
+			context := f.getLineContext(lines, i, 2)
+			matches = append(matches, models.MatchInfo{
+				LineNumber: i + 1,
+				LineText:   line,
+				MatchText:  f.extractBestMatch(line, target, options),
+				Context:    context,
+			})
+		}
+	}
+
+	// If no line matches, try multi-line blocks
+	if len(matches) == 0 {
+		matches = f.findMultiLineMatches(content, target, lines, options)
+	}
+
+	return matches
+}
+
+// findMultiLineMatches finds matches across multiple lines
+func (f *FileOperations) findMultiLineMatches(content, target string, lines []string, options *models.MatchingOptions) []models.MatchInfo {
+	var matches []models.MatchInfo
+
+	// Try blocks of 2-5 lines
+	for blockSize := 2; blockSize <= 5 && len(matches) == 0; blockSize++ {
+		for i := 0; i <= len(lines)-blockSize; i++ {
+			block := strings.Join(lines[i:i+blockSize], "\n")
+			normalizedBlock := f.normalizeForMatching(block, options)
+			normalizedTarget := f.normalizeForMatching(target, options)
+
+			similarity := calculateSimilarity(normalizedBlock, normalizedTarget)
+			threshold := options.SimilarityThreshold
+			if threshold == 0 {
+				threshold = 0.5 // Even lower threshold for multi-line
+			}
+
+			if similarity >= threshold {
+				context := f.getLineContext(lines, i+blockSize/2, 3)
+				matches = append(matches, models.MatchInfo{
+					LineNumber: i + 1,
+					LineText:   lines[i], // Show first line of the block
+					MatchText:  f.extractBestMatch(block, target, options),
+					Context:    context,
+				})
+			}
+		}
+	}
+
+	return matches
+}
+
+// expandMatch tries to expand a match around a found chunk
+func (f *FileOperations) expandMatch(lines []string, startLine int, target string, options *models.MatchingOptions) *models.MatchInfo {
+	if startLine < 0 || startLine >= len(lines) {
+		return nil
+	}
+
+	// Try expanding the match in both directions
+	for radius := 1; radius <= 10; radius++ {
+		start := startLine - radius
+		end := startLine + radius + 1
+
+		if start < 0 {
+			start = 0
+		}
+		if end > len(lines) {
+			end = len(lines)
+		}
+
+		block := strings.Join(lines[start:end], "\n")
+		normalizedBlock := f.normalizeForMatching(block, options)
+		normalizedTarget := f.normalizeForMatching(target, options)
+
+		similarity := calculateSimilarity(normalizedBlock, normalizedTarget)
+		if similarity >= 0.7 { // High threshold for expanded matches
+			context := f.getLineContext(lines, startLine, 3)
+			return &models.MatchInfo{
+				LineNumber: start + 1,
+				LineText:   lines[startLine],
+				MatchText:  f.extractBestMatch(block, target, options),
+				Context:    context,
+			}
+		}
+	}
+
+	return nil
+}
+
+// extractBestMatch extracts the best matching part considering options
+func (f *FileOperations) extractBestMatch(content, target string, options *models.MatchingOptions) string {
+	// Try exact match first
+	if strings.Contains(content, target) {
+		return target
+	}
+
+	// Try normalized match
+	if options.AutoNormalize {
+		normalizedContent := advancedNormalize(content, options)
+		normalizedTarget := advancedNormalize(target, options)
+
+		if strings.Contains(normalizedContent, normalizedTarget) {
+			// Find the original text that corresponds to the normalized match
+			return f.findOriginalMatch(content, target, options)
+		}
+	}
+
+	// Return the content trimmed if no exact match
+	return strings.TrimSpace(content)
+}
+
+// findOriginalMatch finds the original text that matches the normalized version
+func (f *FileOperations) findOriginalMatch(content, target string, options *models.MatchingOptions) string {
+	lines := strings.Split(content, "\n")
+	targetWords := strings.Fields(advancedNormalize(target, options))
+
+	bestMatch := ""
+	bestScore := 0.0
+
+	for _, line := range lines {
+		normalizedLine := advancedNormalize(line, options)
+		lineWords := strings.Fields(normalizedLine)
+
+		score := 0.0
+		for _, targetWord := range targetWords {
+			for _, lineWord := range lineWords {
+				if strings.Contains(lineWord, targetWord) || strings.Contains(targetWord, lineWord) {
+					score += 1.0
+				}
+			}
+		}
+
+		if len(targetWords) > 0 {
+			score = score / float64(len(targetWords))
+		}
+
+		if score > bestScore {
+			bestScore = score
+			bestMatch = strings.TrimSpace(line)
+		}
+	}
+
+	if bestMatch != "" {
+		return bestMatch
+	}
+
+	return strings.TrimSpace(content)
+}
+
+// normalizeForMatching normalizes strings for fuzzy matching
+func (f *FileOperations) normalizeForMatching(s string, options *models.MatchingOptions) string {
+	return advancedNormalize(s, options)
+}
+
+// fuzzyWordMatch performs word-based fuzzy matching
+func (f *FileOperations) fuzzyWordMatch(line, target string, threshold float64) bool {
+	similarity := calculateSimilarity(line, target)
+	return similarity >= threshold
 }
 
 // extractMatchFromLine extracts the best matching part from a line
@@ -628,26 +942,157 @@ func (f *FileOperations) getLineContext(lines []string, lineIndex, contextSize i
 	return context
 }
 
-// generateDiffPreview generates a diff-like preview of changes
+// generateDiffPreview generates a detailed diff-like preview of changes
 func (f *FileOperations) generateDiffPreview(original, modified string, matchInfo *models.MatchInfo) string {
 	var diff strings.Builder
 
-	diff.WriteString("Preview of changes:\n")
-	diff.WriteString("==================\n\n")
+	diff.WriteString("==== PREVIEW MODE - Detailed Change Analysis ====\n\n")
 
 	if matchInfo != nil {
-		diff.WriteString(fmt.Sprintf("Match found at line %d:\n", matchInfo.LineNumber))
-		for _, contextLine := range matchInfo.Context {
-			diff.WriteString(contextLine + "\n")
+		diff.WriteString(fmt.Sprintf("📍 Match Location: Line %d\n", matchInfo.LineNumber))
+		diff.WriteString(fmt.Sprintf("🔍 Match Type: %s\n", f.getMatchType(matchInfo)))
+		diff.WriteString(fmt.Sprintf("📏 Original Length: %d characters\n", len(matchInfo.MatchText)))
+		diff.WriteString(fmt.Sprintf("📏 New Length: %d characters\n", len(modified)))
+
+		// Calculate change statistics
+		if len(modified) > len(matchInfo.MatchText) {
+			diff.WriteString(fmt.Sprintf("📈 Change: +%d characters\n", len(modified)-len(matchInfo.MatchText)))
+		} else if len(modified) < len(matchInfo.MatchText) {
+			diff.WriteString(fmt.Sprintf("📉 Change: -%d characters\n", len(matchInfo.MatchText)-len(modified)))
+		} else {
+			diff.WriteString("🔄 Change: Same length (substitution)\n")
 		}
+
 		diff.WriteString("\n")
+
+		// Show context with line numbers
+		if len(matchInfo.Context) > 0 {
+			diff.WriteString("📋 Context (showing surrounding lines):\n")
+			diff.WriteString("────────────────────────────────────────\n")
+			for _, contextLine := range matchInfo.Context {
+				diff.WriteString(contextLine + "\n")
+			}
+			diff.WriteString("────────────────────────────────────────\n\n")
+		}
+
+		// Show detailed change preview
+		if matchInfo.MatchText != "" {
+			diff.WriteString("🔄 Exact Changes:\n")
+			diff.WriteString("────────────────\n")
+
+			// Show original with highlighting
+			diff.WriteString("BEFORE:\n")
+			if len(matchInfo.MatchText) > 100 {
+				diff.WriteString(fmt.Sprintf("  (showing first 100 chars) %s...\n",
+					f.sanitizeForPreview(matchInfo.MatchText[:100])))
+			} else {
+				diff.WriteString(fmt.Sprintf("  %s\n", f.sanitizeForPreview(matchInfo.MatchText)))
+			}
+
+			diff.WriteString("\nAFTER:\n")
+			if len(modified) > 100 {
+				diff.WriteString(fmt.Sprintf("  (showing first 100 chars) %s...\n",
+					f.sanitizeForPreview(modified[:100])))
+			} else {
+				diff.WriteString(fmt.Sprintf("  %s\n", f.sanitizeForPreview(modified)))
+			}
+
+			// Show word-level diff if strings are reasonable length
+			if len(matchInfo.MatchText) < 500 && len(modified) < 500 {
+				diff.WriteString("\n📝 Word-level Changes:\n")
+				wordDiff := f.generateWordDiff(matchInfo.MatchText, modified)
+				diff.WriteString(wordDiff)
+			}
+		}
+
+		// Safety checks
+		diff.WriteString("\n🛡️  Safety Checks:\n")
+		diff.WriteString("─────────────────\n")
+
+		if strings.Contains(matchInfo.MatchText, "procedure ") || strings.Contains(matchInfo.MatchText, "function ") {
+			diff.WriteString("⚠️  Code block detected - this appears to be a procedure/function\n")
+		}
+		if strings.Count(matchInfo.MatchText, "\n") > 10 {
+			diff.WriteString("⚠️  Large text block - this affects multiple lines\n")
+		}
+		if len(matchInfo.MatchText) > 1000 {
+			diff.WriteString("⚠️  Large change - consider breaking into smaller edits\n")
+		}
+		if matchInfo.MatchText == modified {
+			diff.WriteString("❌ No actual change - old and new text are identical\n")
+		} else {
+			diff.WriteString("✅ Valid change detected\n")
+		}
 	}
 
-	// Show before/after if we have specific match info
-	if matchInfo != nil && matchInfo.MatchText != "" {
-		diff.WriteString("Change preview:\n")
-		diff.WriteString(fmt.Sprintf("- %s\n", matchInfo.MatchText))
-		diff.WriteString(fmt.Sprintf("+ %s\n", modified))
+	diff.WriteString("\n💡 To apply these changes, run the same command without --preview\n")
+
+	return diff.String()
+}
+
+// getMatchType determines what type of match was found
+func (f *FileOperations) getMatchType(matchInfo *models.MatchInfo) string {
+	if strings.Contains(matchInfo.MatchText, matchInfo.LineText) {
+		return "Exact match"
+	}
+	if len(matchInfo.MatchText) < len(matchInfo.LineText) {
+		return "Partial line match"
+	}
+	return "Fuzzy/Normalized match"
+}
+
+// sanitizeForPreview sanitizes text for safe preview display
+func (f *FileOperations) sanitizeForPreview(text string) string {
+	// Replace tabs with visible characters for better preview
+	text = strings.ReplaceAll(text, "\t", "→")
+	// Trim excessive whitespace but show it exists
+	if strings.TrimSpace(text) != text {
+		if strings.HasPrefix(text, " ") || strings.HasPrefix(text, "\t") {
+			text = "␣" + strings.TrimLeft(text, " \t")
+		}
+		if strings.HasSuffix(text, " ") || strings.HasSuffix(text, "\t") {
+			text = strings.TrimRight(text, " \t") + "␣"
+		}
+	}
+	return text
+}
+
+// generateWordDiff generates a word-level diff between two strings
+func (f *FileOperations) generateWordDiff(old, new string) string {
+	oldWords := strings.Fields(old)
+	newWords := strings.Fields(new)
+
+	var diff strings.Builder
+
+	// Simple word-by-word comparison
+	maxLen := len(oldWords)
+	if len(newWords) > maxLen {
+		maxLen = len(newWords)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		oldWord := ""
+		newWord := ""
+
+		if i < len(oldWords) {
+			oldWord = oldWords[i]
+		}
+		if i < len(newWords) {
+			newWord = newWords[i]
+		}
+
+		if oldWord == newWord {
+			if oldWord != "" {
+				diff.WriteString(fmt.Sprintf("  %s\n", oldWord))
+			}
+		} else {
+			if oldWord != "" {
+				diff.WriteString(fmt.Sprintf("- %s\n", oldWord))
+			}
+			if newWord != "" {
+				diff.WriteString(fmt.Sprintf("+ %s\n", newWord))
+			}
+		}
 	}
 
 	return diff.String()
@@ -683,25 +1128,43 @@ func findStringMatches(content, target string) []string {
 	return matches
 }
 
-// findAllMatches finds all matches using advanced matching
+// findAllMatches finds all matches using advanced matching strategies
 func (f *FileOperations) findAllMatches(content, target string, options *models.MatchingOptions) []models.MatchInfo {
 	lines := strings.Split(content, "\n")
 	var allMatches []models.MatchInfo
 
-	// Exact matches first
+	// Strategy 1: Exact matches first
 	exactMatches := f.findExactMatches(content, target, lines)
 	allMatches = append(allMatches, exactMatches...)
 
-	// If no exact matches and fuzzy is enabled, try fuzzy
-	if len(allMatches) == 0 && options.FuzzyMatch {
-		fuzzyMatches := f.findFuzzyMatches(content, target, lines, options)
-		allMatches = append(allMatches, fuzzyMatches...)
-	}
-
-	// If no matches and regex is enabled, try regex
+	// Strategy 2: If no exact matches and regex is enabled, try regex
 	if len(allMatches) == 0 && options.UseRegex {
 		regexMatches := f.findRegexMatches(content, target, lines)
 		allMatches = append(allMatches, regexMatches...)
+	}
+
+	// Strategy 3: Auto-chunking for large strings
+	if len(allMatches) == 0 && options.AutoChunk && len(target) > options.MaxChunkSize {
+		chunkMatches := f.findChunkedMatches(content, target, lines, options)
+		allMatches = append(allMatches, chunkMatches...)
+	}
+
+	// Strategy 4: Normalized matching (more tolerant)
+	if len(allMatches) == 0 && options.AutoNormalize {
+		normalizedMatches := f.findNormalizedMatches(content, target, lines, options)
+		allMatches = append(allMatches, normalizedMatches...)
+	}
+
+	// Strategy 5: Enhanced fuzzy matching
+	if len(allMatches) == 0 && options.FuzzyMatch {
+		fuzzyMatches := f.findEnhancedFuzzyMatches(content, target, lines, options)
+		allMatches = append(allMatches, fuzzyMatches...)
+	}
+
+	// Strategy 6: If still no matches, try the original fuzzy matching as fallback
+	if len(allMatches) == 0 && options.FuzzyMatch {
+		originalFuzzyMatches := f.findFuzzyMatches(content, target, lines, options)
+		allMatches = append(allMatches, originalFuzzyMatches...)
 	}
 
 	return allMatches

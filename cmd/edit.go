@@ -13,19 +13,38 @@ import (
 
 var editCmd = &cobra.Command{
 	Use:   "edit",
-	Short: "Edit a file by replacing text strings",
-	Long: `Edit a file by replacing old strings with new strings.
+	Short: "Edit a file by replacing text strings with enhanced matching",
+	Long: `Edit a file by replacing old strings with new strings using advanced matching strategies.
 
-The command preserves the original file encoding automatically.
-By default, the old string must be unique in the file. Use --replace-all
-to replace all occurrences.
+The command preserves the original file encoding automatically and provides multiple
+matching strategies to handle different scenarios:
+
+MATCHING STRATEGIES:
+- Exact matching (default): Requires perfect string match
+- Fuzzy matching (--fuzzy): Uses similarity-based matching
+- Auto-normalize (--auto-normalize): Tolerates whitespace and formatting differences
+- Auto-chunk (--auto-chunk): Breaks large strings into smaller chunks for matching
+- Regex matching (--regex): Uses regular expressions
+
+ENHANCED FEATURES:
+- Automatic whitespace normalization with --auto-normalize
+- Configurable similarity threshold with --similarity (0.0-1.0)
+- Large string chunking with --auto-chunk and --max-chunk-size
+- Detailed preview mode with --preview for safety
+- Multi-line and context-aware matching
 
 The file is backed up before editing and restored if the operation fails.
 
-Examples:
+Basic Examples:
   cctools edit --file /path/to/file.txt --old "hello" --new "hi"
   cctools edit --file file.txt --old "debug: false" --new "debug: true"
-  cctools edit -f file.txt -o "old text" -n "new text" --replace-all`,
+  cctools edit -f file.txt -o "old text" -n "new text" --replace-all
+
+Advanced Examples:
+  cctools edit -f file.txt -o "procedure.*Click" -n "procedure NewClick" --regex
+  cctools edit -f file.txt -o "large block" -n "new block" --fuzzy --similarity 0.8
+  cctools edit -f file.txt -o "complex procedure" -n "new procedure" --auto-normalize
+  cctools edit -f file.txt -o "huge method" -n "new method" --auto-chunk --preview`,
 	RunE: runEditCmd,
 }
 
@@ -39,6 +58,10 @@ var (
 	editFuzzyMatch      bool
 	editIgnoreWhitespace bool
 	editCaseInsensitive bool
+	editAutoNormalize   bool
+	editSimilarityThreshold float64
+	editAutoChunk       bool
+	editMaxChunkSize    int
 )
 
 func init() {
@@ -53,6 +76,10 @@ func init() {
 	editCmd.Flags().BoolVar(&editFuzzyMatch, "fuzzy", false, "Enable fuzzy matching for strings")
 	editCmd.Flags().BoolVar(&editIgnoreWhitespace, "ignore-whitespace", false, "Ignore differences in whitespace")
 	editCmd.Flags().BoolVar(&editCaseInsensitive, "case-insensitive", false, "Perform case-insensitive matching")
+	editCmd.Flags().BoolVar(&editAutoNormalize, "auto-normalize", false, "Automatically normalize whitespace and formatting")
+	editCmd.Flags().Float64Var(&editSimilarityThreshold, "similarity", 0.7, "Similarity threshold for fuzzy matching (0.0-1.0)")
+	editCmd.Flags().BoolVar(&editAutoChunk, "auto-chunk", false, "Automatically break large strings into smaller chunks")
+	editCmd.Flags().IntVar(&editMaxChunkSize, "max-chunk-size", 500, "Maximum size for chunks when auto-chunk is enabled")
 
 	editCmd.MarkFlagRequired("file")
 	editCmd.MarkFlagRequired("old")
@@ -71,10 +98,14 @@ func runEditCmd(cmd *cobra.Command, args []string) error {
 
 	// Setup matching options
 	options := &models.MatchingOptions{
-		UseRegex:         editUseRegex,
-		FuzzyMatch:       editFuzzyMatch,
-		IgnoreWhitespace: editIgnoreWhitespace,
-		CaseInsensitive:  editCaseInsensitive,
+		UseRegex:            editUseRegex,
+		FuzzyMatch:          editFuzzyMatch,
+		IgnoreWhitespace:    editIgnoreWhitespace,
+		CaseInsensitive:     editCaseInsensitive,
+		AutoNormalize:       editAutoNormalize,
+		SimilarityThreshold: editSimilarityThreshold,
+		AutoChunk:           editAutoChunk,
+		MaxChunkSize:        editMaxChunkSize,
 	}
 
 	// Perform the edit with advanced options

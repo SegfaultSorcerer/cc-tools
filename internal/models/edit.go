@@ -48,6 +48,10 @@ type MatchingOptions struct {
 	FuzzyMatch       bool
 	IgnoreWhitespace bool
 	CaseInsensitive  bool
+	AutoNormalize    bool  // Automatically normalize whitespace and formatting
+	SimilarityThreshold float64 // Threshold for fuzzy matching (0.0-1.0)
+	AutoChunk        bool  // Automatically break large strings into smaller chunks
+	MaxChunkSize     int   // Maximum size for chunks when AutoChunk is enabled
 }
 
 // CopyOperation represents a file copy operation
