@@ -74,6 +74,18 @@ func (f *FileOperations) WriteFile(filePath, content, targetEncoding string) err
 	return nil
 }
 
+// processEscapeCharacters converts common escape sequences to their actual characters
+func processEscapeCharacters(s string) string {
+	// Handle common escape sequences
+	s = strings.ReplaceAll(s, "\\n", "\n")
+	s = strings.ReplaceAll(s, "\\t", "\t")
+	s = strings.ReplaceAll(s, "\\r", "\r")
+	s = strings.ReplaceAll(s, "\\\\", "\\")
+	s = strings.ReplaceAll(s, "\\\"", "\"")
+	s = strings.ReplaceAll(s, "\\'", "'")
+	return s
+}
+
 // EditFile performs a single edit operation on a file
 func (f *FileOperations) EditFile(filePath, oldString, newString string, replaceAll bool) (*models.EditResult, error) {
 	return f.EditFileWithOptions(filePath, oldString, newString, replaceAll, &models.MatchingOptions{}, false)
@@ -100,6 +112,10 @@ func (f *FileOperations) EditFileWithOptions(filePath, oldString, newString stri
 			Error:   err,
 		}, err
 	}
+
+	// Process escape characters in both old and new strings
+	oldString = processEscapeCharacters(oldString)
+	newString = processEscapeCharacters(newString)
 
 	// Try advanced matching first
 	matchInfo, matchErr := f.advancedStringMatch(content, oldString, options, fileInfo.Path)
@@ -246,6 +262,10 @@ func (f *FileOperations) MultiEditFile(request *models.MultiEditRequest) (*model
 	successfulEdits := 0
 
 	for i, edit := range request.Edits {
+		// Process escape characters in edit strings
+		edit.OldString = processEscapeCharacters(edit.OldString)
+		edit.NewString = processEscapeCharacters(edit.NewString)
+
 		// Create matching options for each edit
 		options := &models.MatchingOptions{
 			UseRegex:         edit.UseRegex,
@@ -328,6 +348,9 @@ func (f *FileOperations) performDryRun(content string, request *models.MultiEdit
 	previewParts = append(previewParts, "=============================\n")
 
 	for i, edit := range request.Edits {
+		// Process escape characters in edit strings for preview
+		oldStringProcessed := processEscapeCharacters(edit.OldString)
+
 		previewParts = append(previewParts, fmt.Sprintf("Edit %d: Replace %q with %q", i+1, edit.OldString, edit.NewString))
 
 		// Create matching options for each edit
@@ -339,9 +362,9 @@ func (f *FileOperations) performDryRun(content string, request *models.MultiEdit
 		}
 
 		// Try to find matches
-		if matchInfo, matchErr := f.advancedStringMatch(content, edit.OldString, options, request.FilePath); matchErr == nil {
+		if matchInfo, matchErr := f.advancedStringMatch(content, oldStringProcessed, options, request.FilePath); matchErr == nil {
 			if edit.ReplaceAll {
-				matches := f.findAllMatches(content, edit.OldString, options)
+				matches := f.findAllMatches(content, oldStringProcessed, options)
 				previewParts = append(previewParts, fmt.Sprintf("  ✓ Would replace %d occurrence(s)", len(matches)))
 				for _, match := range matches {
 					previewParts = append(previewParts, fmt.Sprintf("    Line %d: %s", match.LineNumber, strings.TrimSpace(match.LineText)))
