@@ -399,5 +399,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - ✅ **100% Tested**: All operations tested with comprehensive test suite
 
 ---
-
-**Made with ❤️ for developers working with multi-encoding projects**
