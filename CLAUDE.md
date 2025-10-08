@@ -2,104 +2,104 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Nota: O agente que interage com este repositório deve se comunicar em Português do Brasil (PT-BR) em todas as suas interações.
+Note: The agent that interacts with this repository must communicate in English in all its interactions.
 
 ## Project Overview
 
-CCTools é uma ferramenta CLI em Go para edição de arquivos que **preserva automaticamente a codificação original** dos arquivos durante as operações. É especialmente útil para trabalhar com códigos legados, projetos internacionais e arquivos com diferentes codificações de caracteres.
+CCTools is a CLI tool in Go for file editing that **automatically preserves the original encoding** of files during operations. It is especially useful for working with legacy code, international projects, and files with different character encodings.
 
 ## Build and Development Commands
 
-### Build para plataforma atual:
+### Build for current platform:
 ```bash
 go build -o cctools
 ```
 
-### Build multiplataforma:
+### Cross-platform build:
 ```bash
 chmod +x build.sh
 ./build.sh
 ```
 
-### Gerenciamento de dependências:
+### Dependency management:
 ```bash
 go mod tidy
 ```
 
-### Execução direta:
+### Direct execution:
 ```bash
 go run main.go [command] [flags]
 ```
 
-## Arquitetura do Código
+## Code Architecture
 
-### Estrutura principal:
-- **`main.go`**: Entry point que delega para cmd.Execute()
-- **`cmd/`**: Comandos CLI usando framework Cobra
-  - `root.go`: Comando raiz e configuração global
-  - `read.go`, `write.go`, `edit.go`, `multiedit.go`: Implementação dos comandos principais
-- **`pkg/encoding/`**: Detecção e conversão de codificação de caracteres
-- **`pkg/fileops/`**: Operações de arquivo com suporte a múltiplas codificações
-- **`internal/models/`**: Estruturas de dados compartilhadas
+### Main structure:
+- **`main.go`**: Entry point that delegates to cmd.Execute()
+- **`cmd/`**: CLI commands using Cobra framework
+  - `root.go`: Root command and global configuration
+  - `read.go`, `write.go`, `edit.go`, `multiedit.go`: Implementation of main commands
+- **`pkg/encoding/`**: Character encoding detection and conversion
+- **`pkg/fileops/`**: File operations with support for multiple encodings
+- **`internal/models/`**: Shared data structures
 
-### Fluxo de operações:
-1. **Detecção**: `encoding.Detector` identifica a codificação do arquivo usando chardet
-2. **Operação**: `fileops.FileOperations` executa a operação preservando encoding
-3. **Segurança**: Backup automático e rollback em caso de falha
-4. **Atomicidade**: MultiEdit garante que todas as operações succedem ou falham juntas
+### Operation flow:
+1. **Detection**: `encoding.Detector` identifies the file encoding using chardet
+2. **Operation**: `fileops.FileOperations` executes the operation preserving encoding
+3. **Security**: Automatic backup and rollback on failure
+4. **Atomicity**: MultiEdit ensures that all operations succeed or fail together
 
-### Codificações suportadas:
+### Supported encodings:
 - UTF-8, UTF-16 (LE/BE)
 - ISO-8859-1, ISO-8859-15
 - Windows-1252, Windows-1251
 - GB18030, GBK, Big5
 - Shift_JIS, EUC-JP, EUC-KR
 
-## Comandos disponíveis
+## Available Commands
 
 ### cctools read
-Lê arquivos com detecção automática de encoding:
+Reads files with automatic encoding detection:
 ```bash
-./cctools read --file arquivo.txt [--detect-encoding] [--verbose]
+./cctools read --file file.txt [--detect-encoding] [--verbose]
 ```
 
 ### cctools write
-Cria/sobrescreve arquivos com encoding especificado:
+Creates/overwrites files with specified encoding:
 ```bash
-./cctools write --file arquivo.txt --content "conteúdo" [--encoding UTF-8]
+./cctools write --file file.txt --content "content" [--encoding UTF-8]
 ```
 
 ### cctools edit
-Edita arquivos preservando encoding original:
+Edits files preserving original encoding:
 ```bash
-./cctools edit --file arquivo.txt --old "texto antigo" --new "texto novo" [--replace-all]
+./cctools edit --file file.txt --old "old text" --new "new text" [--replace-all]
 ```
 
 ### cctools multiedit
-Múltiplas edições atômicas através de arquivo JSON:
+Multiple atomic edits through JSON file:
 ```bash
-./cctools multiedit --edits-file operacoes.json
+./cctools multiedit --edits-file operations.json
 ```
 
-## Padrões de desenvolvimento
+## Development Standards
 
-### Quando trabalhar com este código:
-1. **Use sempre encoding-aware operations**: O projeto foi criado especificamente para preservar encodings
-2. **Teste com arquivos de diferentes encodings**: Verifique compatibilidade com ISO-8859-1, Windows-1252, etc.
-3. **Mantenha operações atômicas**: Especialmente importante no MultiEdit
-4. **Preserve a arquitetura em camadas**:
+### When working with this code:
+1. **Always use encoding-aware operations**: The project was created specifically to preserve encodings
+2. **Test with files of different encodings**: Check compatibility with ISO-8859-1, Windows-1252, etc.
+3. **Maintain atomic operations**: Especially important in MultiEdit
+4. **Preserve layered architecture**:
    - CLI commands (cmd/) → File operations (pkg/fileops/) → Encoding handling (pkg/encoding/)
 
 ### Testing approach:
-- Teste com arquivos de diferentes encodings na pasta `test_files/` (se existir)
-- Verifique se encoding é preservado após edições
-- Teste rollback em cenários de falha
+- Test with files of different encodings in the `test_files/` folder (if it exists)
+- Verify that encoding is preserved after edits
+- Test rollback in failure scenarios
 
 ### Cross-platform considerations:
-- O build.sh gera binários para Windows, Linux, macOS e FreeBSD
-- Line endings são preservados conforme sistema operacional
-- Caminhos de arquivo devem ser tratados adequadamente em todas as plataformas
+- build.sh generates binaries for Windows, Linux, macOS and FreeBSD
+- Line endings are preserved according to the operating system
+- File paths must be handled appropriately on all platforms
 
-## Documentação técnica
+## Technical Documentation
 
-Consulte `docs/tools.md` para detalhes técnicos das ferramentas de edição e `docs/prompt.md` para instruções específicas sobre uso das ferramentas CCTools.
+Refer to `docs/tools.md` for technical details of editing tools and `docs/prompt.md` for specific instructions on using CCTools tools.

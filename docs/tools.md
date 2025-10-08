@@ -1,74 +1,74 @@
-# Ferramentas de Edição de Arquivos
+# File Editing Tools
 
-Este documento descreve as ferramentas disponíveis para edição de arquivos no Claude Code, incluindo seus parâmetros, funcionamento e características técnicas.
+This document describes the tools available for file editing in Claude Code, including their parameters, operation, and technical characteristics.
 
-## Visão Geral
+## Overview
 
-O Claude Code possui 4 ferramentas principais para edição de arquivos:
+Claude Code has 4 main tools for file editing:
 
-1. **Edit** - Edição simples com substituição de texto
-2. **MultiEdit** - Múltiplas edições em um único arquivo
-3. **Write** - Criação/sobrescrita completa de arquivos
-4. **NotebookEdit** - Edição específica para notebooks Jupyter
+1. **Edit** - Simple editing with text replacement
+2. **MultiEdit** - Multiple edits in a single file
+3. **Write** - Complete creation/overwriting of files
+4. **NotebookEdit** - Specific editing for Jupyter notebooks
 
-## 1. Ferramenta Edit
+## 1. Edit Tool
 
-### Descrição
-Realiza substituições exatas de strings em arquivos existentes.
+### Description
+Performs exact string replacements in existing files.
 
-### Parâmetros
-- `file_path` (obrigatório): Caminho absoluto do arquivo a ser modificado
-- `old_string` (obrigatório): Texto a ser substituído
-- `new_string` (obrigatório): Texto de substituição
-- `replace_all` (opcional, padrão: false): Substitui todas as ocorrências
+### Parameters
+- `file_path` (required): Absolute path of the file to be modified
+- `old_string` (required): Text to be replaced
+- `new_string` (required): Replacement text
+- `replace_all` (optional, default: false): Replaces all occurrences
 
-### Como Funciona
-- Busca pela string exata em `old_string` no arquivo
-- Substitui por `new_string`
-- A string deve ser única no arquivo (exceto se `replace_all=true`)
-- Preserva exatamente a indentação e formatação original
+### How It Works
+- Searches for the exact string in `old_string` in the file
+- Replaces with `new_string`
+- The string must be unique in the file (except if `replace_all=true`)
+- Preserves exactly the original indentation and formatting
 
-### Requisitos
-- O arquivo deve ser lido com a ferramenta `Read` antes da edição
-- Caminhos devem ser absolutos (iniciar com `/`)
-- A string `old_string` deve existir exatamente como especificada
+### Requirements
+- The file must be read with the `Read` tool before editing
+- Paths must be absolute (start with `/`)
+- The `old_string` must exist exactly as specified
 
-### Exemplo
+### Example
 ```json
 {
-  "file_path": "/home/user/projeto/app.js",
+  "file_path": "/home/user/project/app.js",
   "old_string": "const port = 3000;",
   "new_string": "const port = process.env.PORT || 3000;"
 }
 ```
 
-## 2. Ferramenta MultiEdit
+## 2. MultiEdit Tool
 
-### Descrição
-Permite múltiplas edições em um único arquivo de forma atômica.
+### Description
+Allows multiple edits in a single file atomically.
 
-### Parâmetros
-- `file_path` (obrigatório): Caminho absoluto do arquivo
-- `edits` (obrigatório): Array de objetos de edição, cada um contendo:
-  - `old_string`: Texto a ser substituído
-  - `new_string`: Texto de substituição
-  - `replace_all` (opcional): Substitui todas as ocorrências
+### Parameters
+- `file_path` (required): Absolute path of the file
+- `edits` (required): Array of edit objects, each containing:
+  - `old_string`: Text to be replaced
+  - `new_string`: Replacement text
+  - `replace_all` (optional): Replaces all occurrences
 
-### Como Funciona
-- Aplica todas as edições sequencialmente
-- Se qualquer edição falhar, nenhuma é aplicada (operação atômica)
-- Cada edição opera no resultado da edição anterior
-- Ideal para múltiplas mudanças no mesmo arquivo
+### How It Works
+- Applies all edits sequentially
+- If any edit fails, none are applied (atomic operation)
+- Each edit operates on the result of the previous edit
+- Ideal for multiple changes in the same file
 
-### Requisitos
-- Arquivo deve ser lido previamente
-- Todas as edições devem ser válidas para a operação suceder
-- Planejar cuidadosamente para evitar conflitos entre edições sequenciais
+### Requirements
+- File must be read previously
+- All edits must be valid for the operation to succeed
+- Plan carefully to avoid conflicts between sequential edits
 
-### Exemplo
+### Example
 ```json
 {
-  "file_path": "/home/user/projeto/config.js",
+  "file_path": "/home/user/project/config.js",
   "edits": [
     {
       "old_string": "debug: false",
@@ -82,90 +82,90 @@ Permite múltiplas edições em um único arquivo de forma atômica.
 }
 ```
 
-## 3. Ferramenta Write
+## 3. Write Tool
 
-### Descrição
-Cria novos arquivos ou sobrescreve completamente arquivos existentes.
+### Description
+Creates new files or completely overwrites existing files.
 
-### Parâmetros
-- `file_path` (obrigatório): Caminho absoluto do arquivo
-- `content` (obrigatório): Conteúdo completo do arquivo
+### Parameters
+- `file_path` (required): Absolute path of the file
+- `content` (required): Complete content of the file
 
-### Como Funciona
-- Sobrescreve completamente o arquivo se existir
-- Cria novo arquivo se não existir
-- Substitui todo o conteúdo anterior
+### How It Works
+- Completely overwrites the file if it exists
+- Creates new file if it doesn't exist
+- Replaces all previous content
 
-### Requisitos
-- Para arquivos existentes, deve ser lido previamente
-- Caminhos devem ser absolutos
-- Preferir edição de arquivos existentes ao invés de criação
+### Requirements
+- For existing files, must be read previously
+- Paths must be absolute
+- Prefer editing existing files over creation
 
-### Exemplo
+### Example
 ```json
 {
-  "file_path": "/home/user/projeto/novo-arquivo.js",
-  "content": "console.log('Novo arquivo criado!');\nmodule.exports = {};"
+  "file_path": "/home/user/project/new-file.js",
+  "content": "console.log('New file created!');\nmodule.exports = {};"
 }
 ```
 
-## 4. Ferramenta NotebookEdit
+## 4. NotebookEdit Tool
 
-### Descrição
-Edição específica para arquivos Jupyter Notebook (.ipynb).
+### Description
+Specific editing for Jupyter Notebook files (.ipynb).
 
-### Parâmetros
-- `notebook_path` (obrigatório): Caminho absoluto do notebook
-- `new_source` (obrigatório): Novo conteúdo da célula
-- `cell_id` (opcional): ID da célula a ser editada
-- `cell_type` (opcional): Tipo da célula ("code" ou "markdown")
-- `edit_mode` (opcional): Modo de edição ("replace", "insert", "delete")
+### Parameters
+- `notebook_path` (required): Absolute path of the notebook
+- `new_source` (required): New content of the cell
+- `cell_id` (optional): ID of the cell to be edited
+- `cell_type` (optional): Type of cell ("code" or "markdown")
+- `edit_mode` (optional): Edit mode ("replace", "insert", "delete")
 
-### Como Funciona
-- `replace`: Substitui conteúdo da célula existente
-- `insert`: Adiciona nova célula
-- `delete`: Remove célula existente
-- Mantém estrutura JSON do notebook
+### How It Works
+- `replace`: Replaces content of existing cell
+- `insert`: Adds new cell
+- `delete`: Removes existing cell
+- Maintains JSON structure of the notebook
 
-## Codificação de Arquivos
+## File Encoding
 
-### Codificação Padrão
-- **UTF-8**: Todos os arquivos são salvos em UTF-8 por padrão
-- Suporte completo a caracteres Unicode
-- Compatível com caracteres especiais, acentos e emojis
+### Default Encoding
+- **UTF-8**: All files are saved in UTF-8 by default
+- Full support for Unicode characters
+- Compatible with special characters, accents, and emojis
 
-### Comportamento de Persistência
-- Arquivos são salvos imediatamente após cada operação
-- Não há cache ou buffer temporário
-- Mudanças são persistidas diretamente no sistema de arquivos
-- Preserva permissões de arquivo existentes
+### Persistence Behavior
+- Files are saved immediately after each operation
+- No cache or temporary buffer
+- Changes are persisted directly to the file system
+- Preserves existing file permissions
 
-### Características Técnicas
-- Line endings preservados conforme sistema operacional
-- Indentação (tabs/espaços) preservada exatamente
-- Caracteres de controle mantidos quando presentes no original
+### Technical Characteristics
+- Line endings preserved according to operating system
+- Indentation (tabs/spaces) preserved exactly
+- Control characters maintained when present in original
 
-## Boas Práticas
+## Best Practices
 
-### Antes de Editar
-1. Sempre usar `Read` para examinar o arquivo primeiro
-2. Verificar convenções de código existentes
-3. Entender a estrutura do projeto
+### Before Editing
+1. Always use `Read` to examine the file first
+2. Check existing code conventions
+3. Understand the project structure
 
-### Durante a Edição
-1. Usar caminhos absolutos sempre
-2. Preservar indentação e formatação originais
-3. Testar edições complexas com `MultiEdit` quando apropriado
+### During Editing
+1. Always use absolute paths
+2. Preserve original indentation and formatting
+3. Test complex edits with `MultiEdit` when appropriate
 
-### Após Edição
-1. Verificar se mudanças foram aplicadas corretamente
-2. Executar testes quando disponíveis
-3. Verificar lint/typecheck se configurados no projeto
+### After Editing
+1. Verify that changes were applied correctly
+2. Run tests when available
+3. Check lint/typecheck if configured in the project
 
-## Limitações Importantes
+## Important Limitations
 
-- **Strings devem ser exatas**: Espaços e indentação devem coincidir perfeitamente
-- **Caminhos absolutos obrigatórios**: Caminhos relativos não são aceitos
-- **Leitura prévia obrigatória**: Arquivos existentes devem ser lidos antes da edição
-- **Operações atômicas**: MultiEdit falha completamente se qualquer edição individual falhar
-- **Sem desfazer**: Não há funcionalidade de undo integrada
+- **Strings must be exact**: Spaces and indentation must match perfectly
+- **Absolute paths required**: Relative paths are not accepted
+- **Previous reading mandatory**: Existing files must be read before editing
+- **Atomic operations**: MultiEdit fails completely if any individual edit fails
+- **No undo**: No integrated undo functionality

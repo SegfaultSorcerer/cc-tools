@@ -1,96 +1,96 @@
-# CCTools - Ferramenta de Edição com Preservação de Encoding
+# CCTools - File Editing Tool with Encoding Preservation
 
-## Contexto
+## Context
 
-As ferramentas padrão de escrita de arquivos devem ser **substituídas** pelas ferramentas CCTools para garantir preservação adequada de encoding. Use SEMPRE os comandos CCTools ao invés das ferramentas padrão de edição.
+Standard file writing tools must be **replaced** by CCTools tools to ensure proper encoding preservation. ALWAYS use CCTools commands instead of standard editing tools.
 
-## Comando Base
+## Base Command
 
 ```bash
-cctools [comando] [flags]
+cctools [command] [flags]
 ```
 
 ---
 
-## COMANDOS PRINCIPAIS
+## MAIN COMMANDS
 
-### 1. READ - Leitura de Arquivos
+### 1. READ - File Reading
 ```bash
-cctools read --file <caminho> [--detect-encoding] [--verbose]
+cctools read --file <path> [--detect-encoding] [--verbose]
 ```
-- **Sempre execute antes de editar** para detectar encoding
-- Detecta automaticamente e converte para UTF-8
+- **Always execute before editing** to detect encoding
+- Automatically detects and converts to UTF-8
 
-### 2. WRITE - Criação/Sobrescrita
+### 2. WRITE - Creation/Overwrite
 ```bash
-cctools write --file <caminho> --content <conteúdo> [--encoding <encoding>]
-cctools write --file <caminho> --content-file <arquivo_origem>
-cctools write --file <caminho> --stdin
-```
-
-### 3. EDIT - Edição por Substituição ⭐
-```bash
-cctools edit --file <caminho> --old <texto_antigo> --new <texto_novo> [flags]
+cctools write --file <path> --content <content> [--encoding <encoding>]
+cctools write --file <path> --content-file <source_file>
+cctools write --file <path> --stdin
 ```
 
-#### Flags Essenciais
-- `--replace-all`: Substitui todas as ocorrências
-- `--preview`: Mostra prévia detalhada sem aplicar
-- `--auto-normalize`: **[NOVO]** Tolera whitespace irregular
-- `--fuzzy --similarity 0.6`: **[NOVO]** Matching tolerante
-- `--aggressive-fuzzy`: **[NOVO]** Matching ultra-tolerante
-- `--smart-code`: **[NOVO]** Entende estrutura de código
-- `--smart-suggestions`: **[NOVO]** Sugestões inteligentes
-- `--auto-chunk`: **[NOVO]** Para strings grandes
-
-### 4. MULTIEDIT - Edições Múltiplas Atômicas
+### 3. EDIT - Edit by Replacement ⭐
 ```bash
-cctools multiedit --edits-file <arquivo_json> [--preview] [--continue-on-error]
+cctools edit --file <path> --old <old_text> --new <new_text> [flags]
+```
+
+#### Essential Flags
+- `--replace-all`: Replaces all occurrences
+- `--preview`: Shows detailed preview without applying
+- `--auto-normalize`: **[NEW]** Tolerates irregular whitespace
+- `--fuzzy --similarity 0.6`: **[NEW]** Tolerant matching
+- `--aggressive-fuzzy`: **[NEW]** Ultra-tolerant matching
+- `--smart-code`: **[NEW]** Understands code structure
+- `--smart-suggestions`: **[NEW]** Intelligent suggestions
+- `--auto-chunk`: **[NEW]** For large strings
+
+### 4. MULTIEDIT - Multiple Atomic Edits
+```bash
+cctools multiedit --edits-file <json_file> [--preview] [--continue-on-error]
 ```
 
 ---
 
-## 🚀 MELHORIAS CRÍTICAS 2024
+## 🚀 CRITICAL IMPROVEMENTS 2024
 
-### ✅ Problemas Resolvidos
+### ✅ Problems Solved
 
-#### 1. **Matching Muito Restritivo** → **RESOLVIDO**
+#### 1. **Too Restrictive Matching** → **SOLVED**
 ```bash
-# Antes: FALHAVA constantemente
-cctools edit -f arquivo.pas -o "procedure   Method" -n "procedure NewMethod"
+# Before: CONSTANTLY FAILED
+cctools edit -f file.pas -o "procedure   Method" -n "procedure NewMethod"
 
-# Agora: FUNCIONA com --auto-normalize
-cctools edit -f arquivo.pas -o "procedure   Method" -n "procedure NewMethod" --auto-normalize
+# Now: WORKS with --auto-normalize
+cctools edit -f file.pas -o "procedure   Method" -n "procedure NewMethod" --auto-normalize
 ```
 
-#### 2. **Blocos Grandes** → **RESOLVIDO**
+#### 2. **Large Blocks** → **SOLVED**
 ```bash
-# Agora funciona com --auto-chunk
-cctools edit -f arquivo.pas -o "procedure ExtensiveMethod..." -n "procedure NewMethod..." --auto-chunk
+# Now works with --auto-chunk
+cctools edit -f file.pas -o "procedure ExtensiveMethod..." -n "procedure NewMethod..." --auto-chunk
 ```
 
-#### 3. **Fuzzy Limitado** → **MELHORADO**
+#### 3. **Limited Fuzzy** → **IMPROVED**
 ```bash
-# Threshold configurável + aggressive mode
-cctools edit -f arquivo.pas -o "TaskDlg warning" -n "ShowMessage('alert')" --aggressive-fuzzy --similarity 0.3
+# Configurable threshold + aggressive mode
+cctools edit -f file.pas -o "TaskDlg warning" -n "ShowMessage('alert')" --aggressive-fuzzy --similarity 0.3
 ```
 
-#### 4. **Smart Code para Delphi/Pascal** → **NOVO**
+#### 4. **Smart Code for Delphi/Pascal** → **NEW**
 ```bash
-# Entende estrutura Pascal/Delphi
-cctools edit -f arquivo.pas -o "complex procedure" -n "new procedure" --smart-code --code-language pascal
+# Understands Pascal/Delphi structure
+cctools edit -f file.pas -o "complex procedure" -n "new procedure" --smart-code --code-language pascal
 ```
 
-#### 5. **Matching Ambíguo** → **RESOLVIDO** ⭐
+#### 5. **Ambiguous Matching** → **SOLVED** ⭐
 ```bash
-# Código repetitivo em múltiplas funções (agora seleção inteligente)
-cctools edit -f arquivo.pas -o "listadez := TStringList.Create" -n "// OPTIMIZED" --debug-mode
-# Sistema calcula unicidade e escolhe correspondência mais relevante
+# Repetitive code in multiple functions (now intelligent selection)
+cctools edit -f file.pas -o "listadez := TStringList.Create" -n "// OPTIMIZED" --debug-mode
+# System calculates uniqueness and chooses most relevant match
 ```
 
-### 🎯 Estratégias de Matching (Hierárquicas)
+### 🎯 Matching Strategies (Hierarchical)
 
-1. **Exact Match** (padrão)
+1. **Exact Match** (default)
 2. **Regex Match** (`--regex`)
 3. **Smart Code** (`--smart-code`)
 4. **Auto-Chunk** (`--auto-chunk`)
@@ -100,13 +100,13 @@ cctools edit -f arquivo.pas -o "listadez := TStringList.Create" -n "// OPTIMIZED
 
 ---
 
-## COMANDO DEFINITIVO PARA DELPHI
+## DEFINITIVE COMMAND FOR DELPHI
 
 ```bash
-# Ultra-tolerante para código legado
-cctools edit -f arquivo.pas \
-  --old "código problemático" \
-  --new "código novo" \
+# Ultra-tolerant for legacy code
+cctools edit -f file.pas \
+  --old "problematic code" \
+  --new "new code" \
   --smart-code \
   --auto-normalize \
   --aggressive-fuzzy \
@@ -117,89 +117,89 @@ cctools edit -f arquivo.pas \
 
 ---
 
-## TROUBLESHOOTING MELHORADO
+## IMPROVED TROUBLESHOOTING
 
-### Problema: "String not found"
-**Soluções em ordem de eficácia:**
+### Problem: "String not found"
+**Solutions in order of effectiveness:**
 ```bash
-# 1. Auto-normalize (resolve 85% dos casos)
-cctools edit --file arquivo.pas --old "texto problema" --new "novo texto" --auto-normalize
+# 1. Auto-normalize (resolves 85% of cases)
+cctools edit --file file.pas --old "problem text" --new "new text" --auto-normalize
 
-# 2. Aggressive fuzzy (threshold baixo)
-cctools edit --file arquivo.pas --old "texto problema" --new "novo texto" --aggressive-fuzzy --similarity 0.3
+# 2. Aggressive fuzzy (low threshold)
+cctools edit --file file.pas --old "problem text" --new "new text" --aggressive-fuzzy --similarity 0.3
 
-# 3. Smart code (para estruturas)
-cctools edit --file arquivo.pas --old "procedure structure" --new "new procedure" --smart-code
+# 3. Smart code (for structures)
+cctools edit --file file.pas --old "procedure structure" --new "new procedure" --smart-code
 
-# 4. Combinação total
-cctools edit --file arquivo.pas --old "texto problema" --new "novo texto" --auto-normalize --aggressive-fuzzy --smart-suggestions
+# 4. Total combination
+cctools edit --file file.pas --old "problem text" --new "new text" --auto-normalize --aggressive-fuzzy --smart-suggestions
 ```
 
 ---
 
-## REGRAS OBRIGATÓRIAS PARA IA
+## MANDATORY RULES FOR AI
 
-1. **NUNCA use ferramentas padrão de edição**
-2. **SEMPRE use CCTools** para qualquer operação em arquivos
-3. **SEMPRE execute `read --detect-encoding`** antes de editar
-4. **PREFIRA `edit`** ao invés de reescrever arquivos
-5. **USE `--preview` primeiro** em operações complexas
-6. **Para código Delphi/Pascal**: Use `--smart-code --auto-normalize --aggressive-fuzzy`
+1. **NEVER use standard editing tools**
+2. **ALWAYS use CCTools** for any file operations
+3. **ALWAYS execute `read --detect-encoding`** before editing
+4. **PREFER `edit`** over rewriting files
+5. **USE `--preview` first** for complex operations
+6. **For Delphi/Pascal code**: Use `--smart-code --auto-normalize --aggressive-fuzzy`
 
-### Fluxo Recomendado
+### Recommended Flow
 ```bash
-# 1. Detectar encoding
-cctools read --file arquivo.pas --detect-encoding
+# 1. Detect encoding
+cctools read --file file.pas --detect-encoding
 
-# 2. Preview para verificar
-cctools edit --file arquivo.pas --old "antigo" --new "novo" --preview --auto-normalize
+# 2. Preview to verify
+cctools edit --file file.pas --old "old" --new "new" --preview --auto-normalize
 
-# 3. Aplicar se OK
-cctools edit --file arquivo.pas --old "antigo" --new "novo" --auto-normalize
+# 3. Apply if OK
+cctools edit --file file.pas --old "old" --new "new" --auto-normalize
 ```
 
-### Casos de Uso
+### Use Cases
 
-| Cenário | Comando | Razão |
-|---------|---------|-------|
-| Arquivo novo | `write` | Controle do encoding |
-| Edição simples | `edit` | Preserva encoding |
-| Código legado | `edit --auto-normalize --smart-code` | Máxima tolerância |
-| Múltiplas mudanças | `multiedit` | Operação atômica |
-| Strings grandes | `edit --auto-chunk` | Quebra automaticamente |
+| Scenario | Command | Reason |
+|----------|---------|--------|
+| New file | `write` | Encoding control |
+| Simple edit | `edit` | Preserves encoding |
+| Legacy code | `edit --auto-normalize --smart-code` | Maximum tolerance |
+| Multiple changes | `multiedit` | Atomic operation |
+| Large strings | `edit --auto-chunk` | Breaks automatically |
 
 ---
 
-## ENCODINGS SUPORTADOS
-- UTF-8 (padrão)
-- ISO-8859-1 (comum em projetos legados)
+## SUPPORTED ENCODINGS
+- UTF-8 (default)
+- ISO-8859-1 (common in legacy projects)
 - Windows-1252, Windows-1251
 - GB18030, GBK, Big5
 - Shift_JIS, EUC-JP, EUC-KR
 
 ---
 
-## RESUMO EXECUTIVO
+## EXECUTIVE SUMMARY
 
-**CCTools v2024** garante preservação de encoding em TODAS as operações de arquivo com melhorias revolucionárias:
+**CCTools v2024** ensures encoding preservation in ALL file operations with revolutionary improvements:
 
-### 🔥 **DESTAQUES:**
-- ✅ **Matching Ultra-Tolerante**: `--auto-normalize` resolve 85% dos "string not found"
-- ✅ **Strings Sem Limite**: `--auto-chunk` processa qualquer tamanho
-- ✅ **Fuzzy Configurável**: `--similarity` 0.0-1.0 + `--aggressive-fuzzy`
-- ✅ **Smart Code**: Entende Pascal/Delphi, JavaScript, Python, Go...
-- ✅ **Preview Profissional**: Análise detalhada com verificações de segurança
+### 🔥 **HIGHLIGHTS:**
+- ✅ **Ultra-Tolerant Matching**: `--auto-normalize` resolves 85% of "string not found"
+- ✅ **Unlimited Strings**: `--auto-chunk` processes any size
+- ✅ **Configurable Fuzzy**: `--similarity` 0.0-1.0 + `--aggressive-fuzzy`
+- ✅ **Smart Code**: Understands Pascal/Delphi, JavaScript, Python, Go...
+- ✅ **Professional Preview**: Detailed analysis with security checks
 
-### 🎯 **CASOS CRÍTICOS RESOLVIDOS:**
+### 🎯 **CRITICAL CASES SOLVED:**
 ```bash
-# Whitespace irregular (antes sempre falhava)
-cctools edit -f arquivo.pas -o "procedure   Method( param )" -n "procedure NewMethod(param)" --auto-normalize
+# Irregular whitespace (before always failed)
+cctools edit -f file.pas -o "procedure   Method( param )" -n "procedure NewMethod(param)" --auto-normalize
 
-# Métodos grandes (antes limitado)
-cctools edit -f arquivo.pas -o "procedure ExtensiveMethod..." -n "procedure NewMethod..." --auto-chunk
+# Large methods (before limited)
+cctools edit -f file.pas -o "procedure ExtensiveMethod..." -n "procedure NewMethod..." --auto-chunk
 
-# Similarity configurável (antes fixo)
-cctools edit -f arquivo.txt -o "texto similar" -n "texto novo" --aggressive-fuzzy --similarity 0.3
+# Configurable similarity (before fixed)
+cctools edit -f file.txt -o "similar text" -n "new text" --aggressive-fuzzy --similarity 0.3
 ```
 
-**Use SEMPRE CCTools para evitar corrupção de caracteres e garantir compatibilidade com sistemas legados. As melhorias 2024 tornam a ferramenta praticamente infalível para matching de strings complexas.**
+**ALWAYS use CCTools to avoid character corruption and ensure compatibility with legacy systems. The 2024 improvements make the tool practically infallible for complex string matching.**
