@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"cctools/pkg/fileops"
 
@@ -73,6 +75,11 @@ func runWriteCmd(cmd *cobra.Command, args []string) error {
 	content, err := getContentFromSource()
 	if err != nil {
 		return fmt.Errorf("failed to get content: %w", err)
+	}
+
+	// Process unicode escapes when content comes from --content flag
+	if writeContent != "" {
+		content = processWriteUnicodeEscapes(content)
 	}
 
 	// Create file operations handler
@@ -176,4 +183,23 @@ func readFromFile(filePath string) (string, error) {
 	}
 
 	return string(content), nil
+}
+
+// processWriteUnicodeEscapes converts \uXXXX sequences to actual unicode characters
+func processWriteUnicodeEscapes(s string) string {
+	var result strings.Builder
+	i := 0
+	for i < len(s) {
+		if i+5 < len(s) && s[i] == '\\' && s[i+1] == 'u' {
+			hex := s[i+2 : i+6]
+			if codepoint, err := strconv.ParseInt(hex, 16, 32); err == nil {
+				result.WriteRune(rune(codepoint))
+				i += 6
+				continue
+			}
+		}
+		result.WriteByte(s[i])
+		i++
+	}
+	return result.String()
 }

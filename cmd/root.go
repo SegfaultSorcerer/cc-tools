@@ -29,7 +29,7 @@ It provides commands for:
 - Listing directory contents with encoding analysis
 
 All file and directory operations preserve the original file encoding automatically.`,
-	Version: "1.0.0",
+	Version: "1.1.0",
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

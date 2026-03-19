@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -80,10 +81,50 @@ func processEscapeCharacters(s string) string {
 	s = strings.ReplaceAll(s, "\\n", "\n")
 	s = strings.ReplaceAll(s, "\\t", "\t")
 	s = strings.ReplaceAll(s, "\\r", "\r")
+	// Handle unicode escapes \uXXXX
+	s = processUnicodeEscapes(s)
 	s = strings.ReplaceAll(s, "\\\\", "\\")
 	s = strings.ReplaceAll(s, "\\\"", "\"")
 	s = strings.ReplaceAll(s, "\\'", "'")
 	return s
+}
+
+// processUnicodeEscapes converts backslash-u sequences to actual unicode characters
+func processUnicodeEscapes(s string) string {
+	var result strings.Builder
+	i := 0
+	for i < len(s) {
+		if i+5 < len(s) && s[i] == 92 && s[i+1] == 117 {
+			hex := s[i+2 : i+6]
+			if codepoint, err := strconv.ParseInt(hex, 16, 32); err == nil {
+				result.WriteRune(rune(codepoint))
+				i += 6
+				continue
+			}
+		}
+		result.WriteByte(s[i])
+		i++
+	}
+	return result.String()
+}
+
+// normalizeLineEndings converts CRLF to LF for consistent matching
+func normalizeLineEndings(s string) string {
+	return strings.ReplaceAll(s, "\r\n", "\n")
+}
+
+// restoreLineEndings converts LF back to CRLF if the original had CRLF
+func restoreLineEndings(s string, hadCRLF bool) string {
+	if hadCRLF {
+		s = strings.ReplaceAll(s, "\r\n", "\n")
+		return strings.ReplaceAll(s, "\n", "\r\n")
+	}
+	return s
+}
+
+// detectLineEndings returns true if content uses CRLF
+func detectLineEndings(s string) bool {
+	return strings.Contains(s, "\r\n")
 }
 
 // EditFile performs a single edit operation on a file
@@ -112,6 +153,10 @@ func (f *FileOperations) EditFileWithOptions(filePath, oldString, newString stri
 			Error:   err,
 		}, err
 	}
+
+	// Detect and normalize line endings for consistent matching
+	hadCRLF := detectLineEndings(content)
+	content = normalizeLineEndings(content)
 
 	// Process escape characters in both old and new strings
 	oldString = processEscapeCharacters(oldString)
@@ -196,6 +241,9 @@ func (f *FileOperations) EditFileWithOptions(filePath, oldString, newString stri
 		}, err
 	}
 
+	// Restore original line endings before writing
+	newContent = restoreLineEndings(newContent, hadCRLF)
+
 	// Write the modified content back with original encoding
 	if err := f.WriteFile(filePath, newContent, fileInfo.Encoding); err != nil {
 		// Restore from backup
@@ -239,6 +287,10 @@ func (f *FileOperations) MultiEditFile(request *models.MultiEditRequest) (*model
 			Error:   err,
 		}, err
 	}
+
+	// Detect and normalize line endings for consistent matching
+	hadCRLF := detectLineEndings(content)
+	content = normalizeLineEndings(content)
 
 	// Handle dry run mode
 	if request.DryRun {
@@ -310,6 +362,9 @@ func (f *FileOperations) MultiEditFile(request *models.MultiEditRequest) (*model
 			}
 		}
 	}
+
+	// Restore original line endings before writing
+	workingContent = restoreLineEndings(workingContent, hadCRLF)
 
 	// Write the modified content back with original encoding
 	if err := f.WriteFile(request.FilePath, workingContent, fileInfo.Encoding); err != nil {
@@ -1561,7 +1616,7 @@ func (f *FileOperations) findAggressiveFuzzyMatches(content, target string, line
 
 	threshold := options.SimilarityThreshold
 	if threshold == 0 {
-		threshold = 0.3 // Very low threshold for aggressive matching
+		threshold = 0.5 // Moderate threshold for aggressive matching
 	}
 
 	// Try line-by-line aggressive matching
@@ -1634,14 +1689,23 @@ func (f *FileOperations) calculateAggressiveScore(text string, keyWords []string
 
 	textLower := strings.ToLower(text)
 	matchCount := 0
+	lastIndex := -1
+	orderBonus := 0.0
 
 	for _, word := range keyWords {
-		if strings.Contains(textLower, word) {
+		idx := strings.Index(textLower, word)
+		if idx >= 0 {
 			matchCount++
+			// Bonus when keywords appear in correct order
+			if idx > lastIndex {
+				orderBonus += 0.05
+			}
+			lastIndex = idx
 		}
 	}
 
-	return float64(matchCount) / float64(len(keyWords))
+	baseScore := float64(matchCount) / float64(len(keyWords))
+	return baseScore + orderBonus
 }
 
 // generateIntelligentSuggestions creates smart suggestions when no matches are found
@@ -2827,83 +2891,37 @@ func maxFloat64(a, b float64) float64 {
 
 // calculateMatchUniqueness calculates a uniqueness score for a match based on surrounding context
 func (f *FileOperations) calculateMatchUniqueness(lines []string, lineIndex int, target string) float64 {
-	// Get surrounding context (more context = better uniqueness)
 	contextStart := max(0, lineIndex-4)
 	contextEnd := min(len(lines), lineIndex+5)
 	contextLines := lines[contextStart:contextEnd]
 	contextText := strings.Join(contextLines, "\n")
 
-	// Calculate uniqueness based on:
-	// 1. Function signature uniqueness
-	// 2. Variable declarations in context
-	// 3. Logic patterns
-	// 4. Position-based scoring
-
 	score := 0.0
 
-	// High-value function signatures (prioritize Somar function)
-	if strings.Contains(contextText, "function Somar(dez: string): integer") {
-		score += 100.0 // Maximum priority for exact Somar function
-	}
-	if strings.Contains(contextText, "function Somar") {
-		score += 70.0
-	}
-	if strings.Contains(contextText, "function EliminarDezPares") {
-		score += 30.0
-	}
-	if strings.Contains(contextText, "function EliminarDezImPares") {
-		score += 30.0
+	// Reward matches near function/method signatures
+	funcPatterns := []string{"func ", "function ", "procedure ", "public ", "private ", "protected ", "def "}
+	for _, pattern := range funcPatterns {
+		if strings.Contains(strings.ToLower(contextText), pattern) {
+			score += 10.0
+		}
 	}
 
-	// Unique variable declaration patterns
-	if strings.Contains(contextText, "total, itens, a: integer") {
-		score += 50.0
-	}
-	if strings.Contains(contextText, "a, count: integer") {
-		score += 25.0
-	}
-
-	// Unique logic patterns (prioritize Somar logic)
-	if strings.Contains(contextText, "total := itens + total") {
-		score += 40.0
-	}
-	if strings.Contains(contextText, "itens := StrToInt(listadez.Strings[a])") {
-		score += 35.0
-	}
-	if strings.Contains(contextText, "for a := 0 to listadez.Count - 1 do") {
-		score += 20.0
-	}
-	if strings.Contains(contextText, "count := 0") {
-		score += 15.0
-	}
-
-	// Proximity scoring - closer to function signature is better
-	for i := range contextLines {
-		lineOffset := i - (lineIndex - contextStart)
-		if strings.Contains(contextLines[i], "function Somar") {
-			// Higher score for closer proximity to function signature
-			if lineOffset < 0 {
-				score += float64(30 + lineOffset) // Before function signature
-			} else {
-				score += float64(30 - lineOffset) // After function signature
+	// Reward unique identifiers in context (rare words = higher score)
+	targetWords := strings.Fields(target)
+	allContent := strings.Join(lines, "\n")
+	for _, word := range targetWords {
+		if len(word) >= 4 {
+			occurrences := strings.Count(allContent, word)
+			if occurrences == 1 {
+				score += 20.0
+			} else if occurrences <= 3 {
+				score += 10.0
 			}
 		}
 	}
 
-	// Penalize common patterns (but less than before)
-	if strings.Contains(contextText, "listadez := TStringList.Create") {
-		score -= 2.0 // Common pattern, small penalty
-	}
-	if strings.Contains(contextText, "StrToStrings") {
-		score -= 1.0
-	}
-
-	// Bonus for complete function patterns
-	if strings.Contains(contextText, "total, itens, a: integer") &&
-	   strings.Contains(contextText, "total := itens + total") &&
-	   strings.Contains(contextText, "function Somar") {
-		score += 25.0 // Bonus for complete Somar function pattern
-	}
+	// Reward matches earlier in the file (tiebreaker)
+	score += float64(len(lines)-lineIndex) * 0.01
 
 	return maxFloat64(0, score)
 }
