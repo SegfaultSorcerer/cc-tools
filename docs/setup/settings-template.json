@@ -1,0 +1,17 @@
+{
+  "_comment": "Copy this into your project's .claude/settings.json (team-shared) or .claude/settings.local.json (personal)",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "_comment_linux_macos": "Use this on Linux/macOS:",
+            "type": "command",
+            "command": "bash scripts/hooks/enforce-cctools.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
