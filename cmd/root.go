@@ -29,7 +29,12 @@ It provides commands for:
 - Listing directory contents with encoding analysis
 
 All file and directory operations preserve the original file encoding automatically.`,
-	Version: "1.1.0",
+	Version: "dev",
+}
+
+// SetVersion sets the application version (injected at build time via ldflags).
+func SetVersion(v string) {
+	rootCmd.Version = v
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

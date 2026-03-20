@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: "386"
+            ext: ".exe"
+            archive: zip
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+            archive: zip
+          - goos: linux
+            goarch: "386"
+            ext: ""
+            archive: tar.gz
+          - goos: linux
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+          - goos: freebsd
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}"
+          ARCHIVE_DIR="cctools_${GOOS}_${GOARCH}"
+          mkdir -p "staging/${ARCHIVE_DIR}"
+          go build -ldflags "${LDFLAGS}" -o "staging/${ARCHIVE_DIR}/cctools${{ matrix.ext }}" .
+          cp -r docs/ "staging/${ARCHIVE_DIR}/"
+          cp README.md "staging/${ARCHIVE_DIR}/"
+
+      - name: Create archive
+        run: |
+          ARCHIVE_DIR="cctools_${{ matrix.goos }}_${{ matrix.goarch }}"
+          cd staging
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip -r "../${ARCHIVE_DIR}.zip" "${ARCHIVE_DIR}/"
+          else
+            tar -czf "../${ARCHIVE_DIR}.tar.gz" "${ARCHIVE_DIR}/"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ format('cctools_{0}_{1}', matrix.goos, matrix.goarch) }}
+          path: cctools_${{ matrix.goos }}_${{ matrix.goarch }}.*
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum cctools_* > checksums_sha256.txt
+          cat checksums_sha256.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
